@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECG-SOM Explorer</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <span class="brand">ECG-SOM Explorer</span>
+</header>
+
+<div class="layout">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+
+    <div class="ctrl-group">
+      <label class="ctrl-label">Checkpoint</label>
+      <select id="ckpt-select"></select>
+    </div>
+
+    <div class="ctrl-group">
+      <label class="ctrl-label">Dataset path</label>
+      <input type="text" id="data-path" placeholder="data/ptbxl_100_T-12ms.pkl">
+    </div>
+
+    <div class="ctrl-group">
+      <label class="ctrl-label">Split</label>
+      <div class="radio-row">
+        <label><input type="radio" name="split" value="test" checked> test</label>
+        <label><input type="radio" name="split" value="val"> val</label>
+        <label><input type="radio" name="split" value="train"> train</label>
+        <label><input type="radio" name="split" value="all"> all</label>
+      </div>
+    </div>
+
+    <div class="ctrl-group">
+      <label class="ctrl-label">Heatmap colour</label>
+      <select id="color-mode">
+        <option value="majority" selected>Majority class</option>
+        <option value="count">Sample count</option>
+      </select>
+    </div>
+
+    <button id="load-btn" class="btn-primary">Load &amp; Run</button>
+
+    <label class="ctrl-force">
+      <input type="checkbox" id="force-recompute">
+      Force recompute (ignore cache)
+    </label>
+
+    <div id="status" class="status-box"></div>
+
+    <div id="class-legend" class="class-legend" style="display:none"></div>
+
+  </aside>
+
+  <!-- ── Main ── -->
+  <main class="main">
+
+    <!-- Heatmap -->
+    <section class="card" id="heatmap-section">
+      <div id="heatmap-container"></div>
+    </section>
+
+    <!-- Cell detail — hidden until click -->
+    <section class="card" id="cell-detail" style="display:none">
+
+      <h2 id="cell-title">Cell (?, ?)</h2>
+
+      <!-- Lead toggle bar -->
+      <div id="lead-toggle-bar" class="lead-toggle-bar"></div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-head">SOM Prototype</div>
+          <div id="proto-chart" class="chart-wrap"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">Percentile Distribution</div>
+          <div id="pct-chart" class="chart-wrap"></div>
+        </div>
+      </div>
+
+      <div class="samples-head">
+        <span class="panel-head" id="samples-title">Sample Beats</span>
+      </div>
+      <div id="sample-list" class="sample-grid"></div>
+
+    </section>
+
+  </main>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Core deep learning (install with CUDA 12.1 wheel, see below)
+# pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch
+
+# Scientific computing
+numpy
+scipy
+pandas
+scikit-learn
+
+# ECG / signal processing
+neurokit2
+wfdb
+PyWavelets
+soundfile
+
+# Visualization
+matplotlib
+seaborn
+
+# Utilities
+tqdm
