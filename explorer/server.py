@@ -306,8 +306,10 @@ def get_models():
         # Build a human-readable label
         if variant and metrics:
             nmi = metrics["NMI"]
+            ami = metrics["AMI"]
             nmi_str = f"{nmi:.3f}" if nmi is not None else "?"
-            label = f"[abl] {variant}  (NMI={nmi_str})"
+            ami_str = f"{ami:.3f}" if ami is not None else "?"
+            label = f"[abl] {variant}  (NMI={nmi_str}  AMI={ami_str})"
         elif variant:
             label = f"[abl] {variant}"
         else:
@@ -319,6 +321,17 @@ def get_models():
         if metrics:
             entry["metrics"] = metrics
         entries.append(entry)
+
+    def _sort_key(e: dict):
+        m = e.get("metrics") or {}
+        nmi = m.get("NMI")
+        ami = m.get("AMI")
+        # Entries with metrics sort first (descending NMI, then AMI); rest go last
+        if nmi is None:
+            return (1, 0.0, 0.0)
+        return (0, -(nmi), -(ami or 0.0))
+
+    entries.sort(key=_sort_key)
 
     return {
         "models":       entries,

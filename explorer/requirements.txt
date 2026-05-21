@@ -1,0 +1,9 @@
+# Explorer backend — FastAPI + Uvicorn
+fastapi
+uvicorn[standard]
+pydantic
+
+# Numerical / ML (shared with main project)
+# pip install torch --index-url https://download.pytorch.org/whl/cu121
+torch
+numpy
