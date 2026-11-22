@@ -445,6 +445,8 @@ def _som_neighbor_consistency(z: np.ndarray, bmu: np.ndarray, H: int, W: int, k:
     nb_bmu = bmu[neigh]
     dr = np.abs((nb_bmu // W) - bmu_row[:, None])
     dc = np.abs((nb_bmu % W) - bmu_col[:, None])
+    dr = np.minimum(dr, H - dr)
+    dc = np.minimum(dc, W - dc)
     return float(np.mean((dr + dc) <= 1))
 
 
@@ -475,7 +477,11 @@ def compute_som_clustering_metrics(
     q_err = float(np.mean(np.sqrt(dist2[np.arange(z.shape[0]), bmu])))
     bmu_r, bmu_c = bmu // W, bmu % W
     b2_r,  b2_c  = second_bmu // W, second_bmu % W
-    topo_err = float(np.mean((np.abs(bmu_r - b2_r) + np.abs(bmu_c - b2_c)) != 1))
+    dr_t = np.abs(bmu_r - b2_r)
+    dc_t = np.abs(bmu_c - b2_c)
+    dr_t = np.minimum(dr_t, H - dr_t)
+    dc_t = np.minimum(dc_t, W - dc_t)
+    topo_err = float(np.mean((dr_t + dc_t) != 1))
     nc = _som_neighbor_consistency(z, bmu, H, W, k=knn_k)
 
     occupancy = np.bincount(bmu, minlength=total_units).astype(np.int64)
@@ -524,11 +530,9 @@ def compute_som_clustering_metrics(
                     u = x * W + y
                     if occupancy[u] <= 0 or unit_dominant[u] is None:
                         continue
-                    for nx, ny in ((x + 1, y), (x, y + 1)):
-                        if nx >= H or ny >= W:
-                            continue
+                    for nx, ny in (((x + 1) % H, y), (x, (y + 1) % W)):
                         v = nx * W + ny
-                        if occupancy[v] <= 0 or unit_dominant[v] is None:
+                        if v == u or occupancy[v] <= 0 or unit_dominant[v] is None:
                             continue
                         la, lb = unit_dominant[u], unit_dominant[v]
                         same = int(la == lb)

@@ -11,14 +11,14 @@ baseline           : full model as configured in src/config.py
 
 Loss term ablations
 -------------------
-no_disentangle     : delta_age=0, delta_sex=0
+no_disentangle     : delta_age=0, delta_sex=0 (demographic supervision off; probes still run)
 no_age             : delta_age=0
 no_sex             : delta_sex=0
 no_temporal        : tau=0
 no_record_attn     : eta=0
-no_som_commit      : beta=0
-no_som_smooth      : alpha=0
-no_kl              : gamma=0
+no_som_commit      : beta=0  (actually disables SOM neighbourhood smoothing beta*loss_som)
+no_som_smooth      : alpha=0 (actually clamps Student-t df alpha -> 1e-4 in q(z))
+no_kl              : gamma=0 (actually disables SOM commitment KL(p||q) weight gamma)
 
 Architecture ablations
 ----------------------
@@ -45,14 +45,14 @@ slow_ramp          : age_corr_ramp_epochs=20
 
 Loss weight sweeps  (low = 0.1×, high = 5–10× baseline)
 ---------------------------------------------------------
-theta_low/high     : reconstruction weight      (baseline 0.1)
-alpha_low/high     : SOM neighbourhood smooth   (baseline 10.0)
-beta_low/high      : SOM commitment             (baseline 0.5)
-gamma_low/high     : KL divergence              (baseline 10.0)
-tau_low/high       : temporal smoothness        (baseline 1.6)
-eta_low/high       : record-level attention     (baseline 1.0)
-delta_age_low/high : age disentanglement        (baseline 1.0)
-delta_sex_low/high : sex disentanglement        (baseline 1.0)
+theta_low/high     : ELBO / reconstruction weight (baseline 0.1)
+alpha_low/high     : Student-t df in q(z)         (baseline 10.0)
+beta_low/high      : SOM neighbourhood smoothing  (baseline 0.5)
+gamma_low/high     : SOM commitment KL(p||q)      (baseline 10.0)
+tau_low/high       : temporal smoothness          (baseline 1.6)
+eta_low/high       : record-level attention       (baseline 1.0)
+delta_age_low/high : age supervision weight       (baseline 1.0)
+delta_sex_low/high : sex supervision weight       (baseline 1.0)
 
 Optimiser sweeps
 ----------------
@@ -63,10 +63,10 @@ dropout_low/high   : dropout
 Usage
 -----
     cd /nfs/data8/schlegel/git/ecg-som
-    source DisentangledECG/.venv/bin/activate
-    python ablation.py                          # all variants
-    python ablation.py --variants baseline no_temporal no_disentangle
-    python ablation.py --list                   # print available variants
+    source .venv/bin/activate
+    python ablation/ablation.py                          # all variants
+    python ablation/ablation.py --variants baseline no_temporal no_disentangle
+    python ablation/ablation.py --list                   # print available variants
 """
 
 import argparse
@@ -191,15 +191,26 @@ def _make_config(variant_name: str, overrides: dict) -> DPSOM_Config:
 def _flatten_results(variant: str, overrides: dict, results: dict) -> dict:
     """Flatten nested disentanglement sub-dict into a single-level row."""
     row: dict = {"variant": variant}
-    # Record which keys were overridden
     row["overrides"] = json.dumps(overrides, default=str)
     for k, v in results.items():
         if k == "Disentanglement":
             if isinstance(v, dict):
                 for rep_key, rep_block in v.items():
-                    interp = rep_block.get("interpretation", {}) if isinstance(rep_block, dict) else {}
-                    for metric, val in interp.items():
-                        row[f"{rep_key}/{metric}"] = val
+                    if not isinstance(rep_block, dict):
+                        continue
+                    mig = rep_block.get("MIG", {})
+                    if isinstance(mig, dict):
+                        row[f"{rep_key}/MIG_age"] = mig.get("age", {}).get("mig_norm")
+                        row[f"{rep_key}/MIG_sex"] = mig.get("sex", {}).get("mig_norm")
+                    sap = rep_block.get("SAP", {})
+                    if isinstance(sap, dict):
+                        row[f"{rep_key}/SAP_age"] = sap.get("SAP_age")
+                        row[f"{rep_key}/SAP_sex"] = sap.get("SAP_sex")
+                    dci = rep_block.get("DCI", {})
+                    if isinstance(dci, dict):
+                        row[f"{rep_key}/DCI_dis"]  = dci.get("DCI_disentanglement")
+                        row[f"{rep_key}/DCI_comp"] = dci.get("DCI_completeness")
+                        row[f"{rep_key}/DCI_info"] = dci.get("DCI_informativeness")
         else:
             row[k] = v
     return row

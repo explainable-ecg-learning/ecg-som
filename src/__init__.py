@@ -1,5 +1,5 @@
 """
-src — Refactored DisentangledECG package.
+src — DPSOM-ECG package.
 
 Subpackages
 -----------

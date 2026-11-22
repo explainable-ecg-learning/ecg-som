@@ -7,16 +7,16 @@ services:
     ports:
       - "8050:8050"
     volumes:
-      # Mount data, models and logs read-only so the container can load
-      # checkpoints and ECG records without copying them into the image.
+      # Mount data, models, and ablation results read-only at runtime.
       - ../data:/app/data:ro
       - ../models:/app/models:ro
-      - ../logs:/app/logs:ro
-      # Ablation results CSV (read-only)
       - ../ablation:/app/ablation:ro
-      # Cache is written at runtime; keep it on the host between restarts.
-      - ./cache:/app/explorer/cache
+      # Use a local Docker named volume for cache (avoids NFS root_squash PermissionError).
+      - explorer_cache:/app/explorer/cache
     environment:
       - PYTHONUNBUFFERED=1
     command: ["python", "explorer/server.py", "--host", "0.0.0.0", "--port", "8050"]
     restart: unless-stopped
+
+volumes:
+  explorer_cache:

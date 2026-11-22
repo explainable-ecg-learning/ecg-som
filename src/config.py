@@ -28,11 +28,13 @@ class DPSOM_Config:
         self.logdir = f"logs/{self.ex_name}"
         self.modelpath = f"models/{self.ex_name}/{self.ex_name}.ckpt"
         self.data_set = "PTB-XL"
+        self.data_path = "data/PTB-XL"
+        self.error_labels_path = "data/ptbxl_error_labels.csv"
+        self.max_error_severity = 2         # 0..3 (2 drops '3_severe_error' from train/val)
+        self.exclude_error_flags = ["err_scp_zero_diagnostic"]
         self.dropout = 0.2
         self.prior_var = 1
         self.prior = 2.5
-        self.use_saved_pretrain = False
-        self.save_pretrain = False
         self.random_seed = random.SystemRandom().randint(0, 2**32 - 1)
         self.use_data_cache = True
 
@@ -62,3 +64,14 @@ class DPSOM_Config:
         # --- Probe-fitting phases ---
         self.num_epochs_probe = 3           # epochs for age/sex linear probe fitting
         self.lr_probe = 1e-3                # learning rate for probe fitting
+        self.probe_refit_interval = 6       # refit probes every N epochs in Phase 3 (0 = off)
+        self.probe_refit_epochs = 1         # epochs per periodic probe refit
+
+        # --- Features & checkpointing ---
+        self.use_rr_features = True         # append local (RR_prev, RR_next) to beat_meta
+        self.use_best_checkpoint = True     # evaluate best val-NMI checkpoint after Phase 3
+
+        # --- GPU acceleration ---
+        self.use_amp = True                 # bfloat16 autocast on Ampere+ CUDA GPUs
+        self.fast_gpu = True                # TF32 + cuDNN benchmark + fused Adam
+        self.preload_to_gpu = True          # keep preprocessed beats resident in GPU VRAM

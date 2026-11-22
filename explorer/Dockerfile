@@ -9,14 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY DisentangledECG/requirements.txt requirements.txt
+COPY requirements.txt requirements.txt
+COPY explorer/requirements.txt explorer-requirements.txt
 
 # Install CPU-only torch first (smaller image; use a CUDA base image if GPU is needed)
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Additional deps required by the explorer backend
-RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic
+    pip install --no-cache-dir -r requirements.txt -r explorer-requirements.txt
 
 # ── runtime stage ─────────────────────────────────────────────────────────────
 FROM python:3.11-slim
@@ -36,6 +34,7 @@ COPY src/ src/
 COPY explorer/ explorer/
 
 ENV PYTHONUNBUFFERED=1
+ENV TORCH_COMPILE_DISABLE=1
 
 EXPOSE 8050
 

@@ -206,6 +206,7 @@ def log_som_visualizations(
         encoder_fc_hidden_dim=int(meta.get("encoder_fc_hidden_dim", 512)),
         z_age_dim_factor=float(meta.get("z_age_dim_factor", 0.25)),
         z_sex_dim_factor=float(meta.get("z_sex_dim_factor", 0.25)),
+        amp_context_dim=meta.get("amp_context_dim", None),
     ).to(device)
     model.load_state_dict(state, strict=False)
     model.eval()

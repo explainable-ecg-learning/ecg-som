@@ -14,7 +14,6 @@ import os
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 INPUT_PATTERN = os.path.join(_HERE, "ablation_results_gpu*.csv")
-RETRY_PATTERN = os.path.join(_HERE, "ablation_results_retry_gpu*.csv")
 OUTPUT_CSV    = os.path.join(_HERE, "ablation_results_all.csv")
 OUTPUT_JSON   = os.path.join(_HERE, "ablation_results_all.json")
 
@@ -40,11 +39,9 @@ def write_csv(rows: list[dict], path: str) -> None:
 
 
 def main() -> None:
-    files = sorted(glob.glob(INPUT_PATTERN))
-    retry_files = sorted(glob.glob(RETRY_PATTERN))
-    all_files = files + retry_files
+    all_files = sorted(glob.glob(INPUT_PATTERN))
     if not all_files:
-        print(f"No files matching '{INPUT_PATTERN}' or '{RETRY_PATTERN}' found.")
+        print(f"No files matching '{INPUT_PATTERN}' found.")
         return
 
     all_rows: list[dict] = []
@@ -71,7 +68,7 @@ def main() -> None:
     with open(OUTPUT_JSON, "w") as f:
         json.dump(all_rows, f, indent=2, default=str)
 
-    print(f"\nMerged {len(all_rows)} rows from {len(files)} file(s).")
+    print(f"\nMerged {len(all_rows)} rows from {len(all_files)} file(s).")
     print(f"  CSV  → {OUTPUT_CSV}")
     print(f"  JSON → {OUTPUT_JSON}")
 

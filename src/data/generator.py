@@ -10,12 +10,31 @@ class ECG_DataGenerator:
     for efficient GPU transfer.
     """
 
-    def __init__(self, ecg_dataset, batch_size=300, device=None, pin_memory=True):
+    def __init__(self, ecg_dataset, batch_size=300, device=None, pin_memory=True,
+                 use_rr_features=True, preload_to_gpu=True):
         self.ecg_dataset = ecg_dataset
         self.batch_size = batch_size
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pin_memory = pin_memory and (self.device.type == "cuda")
+        self.use_rr_features = use_rr_features
+        self.preload_to_gpu = preload_to_gpu and (self.device.type == "cuda")
         self._record_cache = {}
+        self._gpu_split_cache = {}
+
+    @staticmethod
+    def _compute_rr_features(record) -> torch.Tensor:
+        """Compute per-beat (RR_prev, RR_next) in seconds, clipped to [0.2, 2.5] s."""
+        nb = len(record.beat_representations)
+        rr = np.full((nb, 2), 0.8, dtype=np.float32)  # fallback ~75 bpm
+        peaks = getattr(record, "r_peaks", None)
+        fs = float(getattr(record, "fs", 100.0))
+        if peaks is not None and len(peaks) >= nb + 2 and fs > 0:
+            p = np.asarray(peaks, dtype=np.float32)
+            rr_prev = (p[1:nb + 1] - p[0:nb]) / fs
+            rr_next = (p[2:nb + 2] - p[1:nb + 1]) / fs
+            rr[:, 0] = np.clip(rr_prev, 0.2, 2.5)
+            rr[:, 1] = np.clip(rr_next, 0.2, 2.5)
+        return torch.from_numpy(rr)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -34,18 +53,22 @@ class ECG_DataGenerator:
             masks   = torch.from_numpy(record.beat_masks).float()
             sigmas  = torch.from_numpy(record.beat_sigma).float()
             amaxes  = torch.from_numpy(record.beat_amax).float()
+            rr      = self._compute_rr_features(record) if self.use_rr_features else None
 
             if self.pin_memory:
                 beats  = beats.pin_memory()
                 masks  = masks.pin_memory()
                 sigmas = sigmas.pin_memory()
                 amaxes = amaxes.pin_memory()
+                if rr is not None:
+                    rr = rr.pin_memory()
 
             torch_records.append({
                 "beats":     beats,
                 "masks":     masks,
                 "sigmas":    sigmas,
                 "amaxes":    amaxes,
+                "rr":        rr,
                 "age":       record.age,
                 "sex":       record.sex,
                 "label":     self.ecg_dataset.label_encoder.transform([record.label])[0],
@@ -76,104 +99,146 @@ class ECG_DataGenerator:
             g += nb
         return records, rec_to_global, g
 
+    def _preload_split_tensors(self, split="train"):
+        """Pack an entire split into contiguous flat tensors (resident on GPU when enabled).
+
+        Eliminates per-batch Python loops and CPU->GPU copies during training/eval.
+        """
+        if split in self._gpu_split_cache:
+            return self._gpu_split_cache[split]
+
+        records = self.ecg_dataset.get_data(split)
+        target_dev = self.device if self.preload_to_gpu else torch.device("cpu")
+
+        beats_all, masks_all, meta_all = [], [], []
+        num_beats = np.empty(len(records), dtype=np.int64)
+        ages_np   = np.empty(len(records), dtype=np.float32)
+        sex_np    = np.empty(len(records), dtype=np.int64)
+        labels_np = self.ecg_dataset.label_encoder.transform([r.label for r in records]).astype(np.int64)
+
+        for i, r in enumerate(records):
+            nb = len(r.beat_representations)
+            num_beats[i] = nb
+            ages_np[i]   = float(r.age)
+            sex_np[i]    = int(r.sex)
+
+            b = torch.from_numpy(r.beat_representations).float()
+            if b.ndim == 3:
+                b = b.permute(0, 2, 1).contiguous()  # [nb, C, T]
+            m = torch.from_numpy(r.beat_masks).float()
+            parts = [
+                torch.from_numpy(r.beat_sigma).float(),
+                torch.from_numpy(r.beat_amax).float(),
+            ]
+            if self.use_rr_features:
+                parts.append(self._compute_rr_features(r))
+            beats_all.append(b)
+            masks_all.append(m)
+            meta_all.append(torch.cat(parts, dim=1))
+
+        max_nb = int(num_beats.max())
+        rec_gidx = np.full((len(records), max_nb), -1, dtype=np.int64)
+        offset = 0
+        for i, nb in enumerate(num_beats):
+            rec_gidx[i, :nb] = np.arange(offset, offset + nb, dtype=np.int64)
+            offset += int(nb)
+
+        pack = {
+            "all_beats": torch.cat(beats_all, dim=0).to(target_dev, non_blocking=True),
+            "all_masks": torch.cat(masks_all, dim=0).to(target_dev, non_blocking=True),
+            "all_meta":  torch.cat(meta_all,  dim=0).to(target_dev, non_blocking=True),
+            "rec_gidx":  torch.from_numpy(rec_gidx).to(target_dev, non_blocking=True),
+            "num_beats": torch.from_numpy(num_beats).to(target_dev, non_blocking=True),
+            "ages":      torch.from_numpy(ages_np).to(target_dev, non_blocking=True),
+            "sex":       torch.from_numpy(sex_np).to(target_dev, non_blocking=True),
+            "labels":    torch.from_numpy(labels_np).to(target_dev, non_blocking=True),
+            "max_nb":    max_nb,
+            "num_records": len(records),
+        }
+        self._gpu_split_cache[split] = pack
+        return pack
+
+    def get_flat_beats_tensor(self, split="train") -> torch.Tensor:
+        """Return contiguous [total_beats, C, T] tensor (on GPU when preloaded)."""
+        return self._preload_split_tensors(split)["all_beats"]
+
     # ------------------------------------------------------------------
     # Generators
     # ------------------------------------------------------------------
 
     def get_record_batch_generator(self, mode="train", max_beats=8, shuffle=True):
         """
-        Yield batches of records.
+        Yield batches of records using vectorized tensor gathering.
 
         Each batch is a tuple::
 
             (beats, beat_mask, beat_meta, beat_valid,
              global_beat_idx, record_age, record_sex, labels)
-
-        Shapes:
-            beats          [B, N, C, T]
-            beat_mask      [B, N, T]
-            beat_meta      [B, N, 2*C]
-            beat_valid     [B, N]
-            global_beat_idx [B, N]  (-1 = padding)
-            record_age     [B]
-            record_sex     [B]
-            labels         [B]
         """
-        torch_records = self._preload_records_to_torch(split=mode)
-        _, rec_to_global, _ = self.build_global_beat_index(split=mode)
+        pack = self._preload_split_tensors(split=mode)
+        all_beats = pack["all_beats"]
+        all_masks = pack["all_masks"]
+        all_meta  = pack["all_meta"]
+        rec_gidx  = pack["rec_gidx"]
+        num_beats = pack["num_beats"]
+        ages_all  = pack["ages"]
+        sex_all   = pack["sex"]
+        labels_all = pack["labels"]
+        num_records = pack["num_records"]
+        max_nb      = pack["max_nb"]
 
-        if max_beats is None:
-            max_beats = max(r["num_beats"] for r in torch_records)
-
-        r0 = torch_records[0]
-        C, T = r0["beats"].shape[1], r0["beats"].shape[2]
-        rec_indices = np.arange(len(torch_records))
+        N = max_nb if max_beats is None else int(max_beats)
+        dev = all_beats.device
+        pos_range = torch.arange(N, device=dev)
 
         while True:
             if mode == "train" and shuffle:
-                np.random.shuffle(rec_indices)
+                perm = torch.randperm(num_records, device=dev)
+            else:
+                perm = torch.arange(num_records, device=dev)
 
-            for s in range(0, len(rec_indices), self.batch_size):
-                batch_ridx = rec_indices[s:s + self.batch_size]
-                B, N = len(batch_ridx), max_beats
+            for s in range(0, num_records, self.batch_size):
+                ridx = perm[s:s + self.batch_size]
+                B = ridx.numel()
+                nb = num_beats[ridx]  # [B]
+                gidx_row = rec_gidx[ridx]  # [B, max_nb]
 
-                beats_list, mask_list, sig_list, amax_list = [], [], [], []
-                valid_np = np.zeros((B, N), np.float32)
-                gidx_np  = -np.ones((B, N), np.int64)
-                ages_np  = np.zeros(B, np.float32)
-                sex_np   = np.zeros(B, np.int64)
-                labels_np = np.zeros(B, np.int64)
+                if mode == "train" and max_nb > N:
+                    # Vectorized random without-replacement selection (sorted chronologically)
+                    scores = torch.rand(B, max_nb, device=dev)
+                    invalid_pos = torch.arange(max_nb, device=dev).unsqueeze(0) >= nb.unsqueeze(1)
+                    scores = scores.masked_fill(invalid_pos, 2.0)
+                    sel_pos = scores.topk(N, dim=1, largest=False).indices
+                    sel_pos, _ = torch.sort(sel_pos, dim=1)
+                    gidx_t = gidx_row.gather(1, sel_pos)
+                else:
+                    if max_nb >= N:
+                        gidx_t = gidx_row[:, :N]
+                    else:
+                        pad = torch.full((B, N - max_nb), -1, dtype=torch.long, device=dev)
+                        gidx_t = torch.cat([gidx_row, pad], dim=1)
 
-                for b, ridx in enumerate(batch_ridx):
-                    r  = torch_records[ridx]
-                    nb = r["num_beats"]
-                    take = min(nb, N)
+                valid_bool = pos_range.unsqueeze(0) < nb.unsqueeze(1)  # [B, N]
+                gidx_t = gidx_t.masked_fill(~valid_bool, -1)
+                safe_idx = gidx_t.clamp_min(0)
 
-                    ages_np[b]   = float(r["age"])
-                    sex_np[b]    = int(r["sex"])
-                    labels_np[b] = int(r["label"])
+                valid_t = valid_bool.float()
+                beats_t = all_beats[safe_idx] * valid_t.unsqueeze(-1).unsqueeze(-1)
+                mask_t  = all_masks[safe_idx] * valid_t.unsqueeze(-1)
+                meta_t  = all_meta[safe_idx]  * valid_t.unsqueeze(-1)
+                age_t   = ages_all[ridx]
+                sex_t   = sex_all[ridx]
+                labels_t = labels_all[ridx]
 
-                    sel = (
-                        np.random.choice(nb, take, replace=False)
-                        if mode == "train" and nb > take
-                        else np.arange(take)
-                    )
-
-                    b_sel = r["beats"][sel]
-                    m_sel = r["masks"][sel]
-                    s_sel = r["sigmas"][sel]
-                    a_sel = r["amaxes"][sel]
-
-                    if take < N:
-                        def _pad(t, shape):
-                            p = torch.zeros(shape, dtype=t.dtype)
-                            return torch.cat([t, p.pin_memory() if self.pin_memory else p], dim=0)
-
-                        b_sel = _pad(b_sel, (N - take, C, T))
-                        m_sel = _pad(m_sel, (N - take, T))
-                        s_sel = _pad(s_sel, (N - take, C))
-                        a_sel = _pad(a_sel, (N - take, C))
-
-                    beats_list.append(b_sel)
-                    mask_list.append(m_sel)
-                    sig_list.append(s_sel)
-                    amax_list.append(a_sel)
-
-                    valid_np[b, :take] = 1.0
-                    gidx_np[b, :take]  = rec_to_global[ridx][sel]
-
-                nk = self.pin_memory
-                beats_t = torch.stack(beats_list).to(self.device, non_blocking=nk)
-                mask_t  = torch.stack(mask_list).to(self.device, non_blocking=nk)
-                meta_t  = torch.cat(
-                    [torch.stack(sig_list), torch.stack(amax_list)], dim=2
-                ).to(self.device, non_blocking=nk)
-
-                valid_t  = torch.from_numpy(valid_np).float().to(self.device)
-                gidx_t   = torch.from_numpy(gidx_np).long().to(self.device)
-                age_t    = torch.from_numpy(ages_np).float().to(self.device)
-                sex_t    = torch.from_numpy(sex_np).long().to(self.device)
-                labels_t = torch.from_numpy(labels_np).long().to(self.device)
+                if dev != self.device:
+                    beats_t  = beats_t.to(self.device, non_blocking=self.pin_memory)
+                    mask_t   = mask_t.to(self.device, non_blocking=self.pin_memory)
+                    meta_t   = meta_t.to(self.device, non_blocking=self.pin_memory)
+                    valid_t  = valid_t.to(self.device, non_blocking=self.pin_memory)
+                    gidx_t   = gidx_t.to(self.device, non_blocking=self.pin_memory)
+                    age_t    = age_t.to(self.device, non_blocking=self.pin_memory)
+                    sex_t    = sex_t.to(self.device, non_blocking=self.pin_memory)
+                    labels_t = labels_t.to(self.device, non_blocking=self.pin_memory)
 
                 yield beats_t, mask_t, meta_t, valid_t, gidx_t, age_t, sex_t, labels_t
 
@@ -224,11 +289,12 @@ class ECG_DataGenerator:
 
     def get_num_batches(self, split="train"):
         data = self.ecg_dataset.get_data(split)
-        total = sum(len(r.beat_representations) for r in data)
-        return int(np.ceil(total / self.batch_size))
+        return int(np.ceil(len(data) / self.batch_size))
 
     def clear_cache(self, split=None):
         if split is None:
             self._record_cache.clear()
-        elif split in self._record_cache:
-            del self._record_cache[split]
+            self._gpu_split_cache.clear()
+        else:
+            self._record_cache.pop(split, None)
+            self._gpu_split_cache.pop(split, None)

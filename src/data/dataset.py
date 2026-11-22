@@ -68,13 +68,85 @@ class ECG_Dataset:
             filtered = self.records
 
         if split != "test":
-            filtered = [r for r in filtered if r.is_valid]
+            filtered = [r for r in filtered if r.is_valid and r.beat_representations is not None]
         else:
-            filtered = [r for r in filtered if r.reason != "Age > 100"]
+            filtered = [r for r in filtered if r.age <= 100 and r.beat_representations is not None]
 
         if not filtered:
             raise ValueError(f"No records found for split '{split}'")
         return filtered
+
+    def apply_error_labels(
+        self,
+        error_labels_path: str,
+        max_error_severity: int | None = 2,
+        exclude_error_flags: list[str] | None = None,
+        verbose: bool = True,
+    ) -> dict[str, int]:
+        """Merge per-record quality curation from ecg-data-repo's error_labels.csv.
+
+        Records in train/val (folds 1-9) exceeding ``max_error_severity`` (0..3) or
+        matching any flag in ``exclude_error_flags`` are marked ``is_valid = False``.
+        Test records (fold 10) retain their metadata annotations without being dropped
+        by ``get_data("test")`` (which only enforces ``age <= 100`` and valid beats).
+        """
+        if not os.path.exists(error_labels_path):
+            raise FileNotFoundError(f"Error labels CSV not found at {error_labels_path}")
+
+        err_df = pd.read_csv(error_labels_path, index_col="ecg_id")
+        err_df["error_tags"] = err_df["error_tags"].fillna("")
+        exclude_error_flags = list(exclude_error_flags or [])
+        for flag in exclude_error_flags:
+            if flag not in err_df.columns:
+                raise ValueError(f"Unknown error flag '{flag}' in {error_labels_path}")
+
+        newly_flagged = 0
+        already_invalid = 0
+        matched = 0
+
+        for r in self.records:
+            if r.id not in err_df.index:
+                continue
+            matched += 1
+            erow = err_df.loc[r.id]
+            tier_str = str(erow["severity_tier"])
+            tier_num = int(tier_str.split("_", 1)[0])
+            tags = str(erow["error_tags"])
+
+            r.error_severity = tier_num
+            r.error_tags = tags.split("|") if tags else []
+
+            fail_reasons = []
+            if max_error_severity is not None and tier_num > max_error_severity:
+                fail_reasons.append(f"severity={tier_str}")
+            for flag in exclude_error_flags:
+                if int(erow[flag]) != 0:
+                    fail_reasons.append(flag)
+
+            if fail_reasons:
+                if r.is_valid:
+                    r.is_valid = False
+                    r.reason = "; ".join(fail_reasons)
+                    newly_flagged += 1
+                else:
+                    already_invalid += 1
+
+        stats = {
+            "matched": matched,
+            "newly_flagged": newly_flagged,
+            "already_invalid": already_invalid,
+        }
+        if verbose:
+            train_n = len(self.get_data("train"))
+            val_n   = len(self.get_data("val"))
+            test_n  = len(self.get_data("test"))
+            print(
+                f"[Curation] Applied {os.path.basename(error_labels_path)} "
+                f"(max_severity={max_error_severity}, exclude={exclude_error_flags}): "
+                f"+{newly_flagged} newly excluded ({already_invalid} already invalid) "
+                f"→ train={train_n}, val={val_n}, test={test_n}"
+            )
+        return stats
 
     def import_record(self, row, from_path, is_valid=True, reason=None):
         sig, _ = wfdb.rdsamp(from_path)

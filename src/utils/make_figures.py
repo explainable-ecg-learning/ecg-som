@@ -1,4 +1,4 @@
-"""Generate architecture and loss schematic figures for the README.
+"""Generate minimalist architecture and loss overview figures for docs/.
 
 Run from repo root:
     python src/utils/make_figures.py
@@ -7,362 +7,354 @@ Outputs:
     docs/loss.png
 """
 from __future__ import annotations
+
 import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
+from matplotlib.patches import FancyBboxPatch
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "docs")
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# ── colour palette ────────────────────────────────────────────────────────────
-C_IN    = "#89b4fa"   # input / data – blue
-C_ENC   = "#a6e3a1"   # encoder – green
-C_LATENT= "#cba6f7"   # latent / VAE – purple
-C_SOM   = "#f9e2af"   # SOM – yellow
-C_DEC   = "#fab387"   # decoder – peach
-C_PRED  = "#89dceb"   # prediction heads – sky
-C_CORR  = "#f38ba8"   # age-correction – red/pink
-C_LOSS  = "#313244"   # loss boxes background (dark)
-BG      = "#1e1e2e"   # figure background
-FG      = "#cdd6f4"   # foreground / text
-ARROW   = "#9399b2"
+# ── Minimalist light palette (publication style) ──────────────────────────────
+BG          = "#ffffff"
+TEXT_MAIN   = "#0f172a"   # slate-900
+TEXT_SUB    = "#64748b"   # slate-500
+BORDER_NEUT = "#cbd5e1"   # slate-300
+FILL_NEUT   = "#f8fafc"   # slate-50
+ARROW_COL   = "#94a3b8"   # slate-400
 
-FONT = dict(family="monospace")
+# Subtle semantic accents: (fill, border, text/accent)
+ACC_INPUT = ("#f1f5f9", "#94a3b8", "#334155")   # neutral slate
+ACC_MORPH = ("#eff6ff", "#60a5fa", "#1d4ed8")   # soft blue
+ACC_SOM   = ("#fefce8", "#eab308", "#a16207")   # soft gold
+ACC_DEC   = ("#fff7ed", "#fb923c", "#c2410c")   # soft orange
+ACC_DEMO  = ("#f0fdfa", "#2dd4bf", "#0f766e")   # soft teal
+ACC_CORR  = ("#fdf2f8", "#f472b6", "#be185d")   # soft rose
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
-def box(ax, xy, w, h, label, color, fontsize=8.5, sublabel=None, radius=0.015):
+def card(ax, xy, w, h, title, subtitle=None, accent=ACC_INPUT, title_size=9.5, sub_size=7.6, radius=0.016):
     x, y = xy
+    fill, border, _ = accent
     patch = FancyBboxPatch(
         (x - w / 2, y - h / 2), w, h,
         boxstyle=f"round,pad=0,rounding_size={radius}",
-        linewidth=1.2,
-        edgecolor=FG,
-        facecolor=color,
+        linewidth=1.3,
+        edgecolor=border,
+        facecolor=fill,
         zorder=3,
     )
     ax.add_patch(patch)
-    dy = 0.012 if sublabel else 0
-    ax.text(x, y + dy, label, ha="center", va="center",
-            fontsize=fontsize, color="black", fontweight="bold",
-            fontfamily="monospace", zorder=4)
-    if sublabel:
-        ax.text(x, y - 0.022, sublabel, ha="center", va="center",
-                fontsize=7, color="#313244", fontfamily="monospace", zorder=4)
+    dy = 0.015 if subtitle else 0.0
+    ax.text(
+        x, y + dy, title,
+        ha="center", va="center",
+        fontsize=title_size, fontweight="semibold", color=TEXT_MAIN,
+        fontfamily="sans-serif", zorder=4,
+    )
+    if subtitle:
+        ax.text(
+            x, y - 0.020, subtitle,
+            ha="center", va="center",
+            fontsize=sub_size, color=TEXT_SUB,
+            fontfamily="sans-serif", zorder=4,
+        )
 
 
-def arrow(ax, x0, y0, x1, y1, label="", color=ARROW):
+def arrow(ax, x0, y0, x1, y1, color=ARROW_COL, lw=1.4, rad=0.0, ls="-"):
     ax.annotate(
         "", xy=(x1, y1), xytext=(x0, y0),
         arrowprops=dict(
-            arrowstyle="->,head_width=0.015,head_length=0.012",
-            color=color, lw=1.3,
+            arrowstyle="-|>,head_width=0.28,head_length=0.42",
+            mutation_scale=11,
+            color=color,
+            lw=lw,
+            linestyle=ls,
+            connectionstyle=f"arc3,rad={rad}",
+            shrinkA=1,
+            shrinkB=1,
         ),
         zorder=2,
     )
-    if label:
-        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-        ax.text(mx + 0.008, my, label, fontsize=6.5, color=FG,
-                fontfamily="monospace", zorder=5)
 
 
-def arrow_h(ax, x0, x1, y, label="", color=ARROW):
-    arrow(ax, x0, y, x1, y, label=label, color=color)
+def elbow(ax, pts, color=ARROW_COL, lw=1.2, ls="-"):
+    for (x0, y0), (x1, y1) in zip(pts[:-2], pts[1:-1]):
+        ax.plot([x0, x1], [y0, y1], color=color, lw=lw, ls=ls, zorder=1, solid_capstyle="round")
+    (x0, y0), (x1, y1) = pts[-2], pts[-1]
+    arrow(ax, x0, y0, x1, y1, color=color, lw=lw, ls=ls)
 
 
-def arrow_v(ax, x, y0, y1, label="", color=ARROW):
-    arrow(ax, x, y0, x, y1, label=label, color=color)
+def pill(ax, xy, text, color=TEXT_SUB, bg="#ffffff", border="#e2e8f0", fontsize=7.0):
+    x, y = xy
+    ax.text(
+        x, y, text,
+        ha="center", va="center",
+        fontsize=fontsize, color=color, fontfamily="sans-serif",
+        bbox=dict(boxstyle="round,pad=0.32,rounding_size=0.35", facecolor=bg, edgecolor=border, lw=0.9),
+        zorder=5,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Figure 1 – Architecture
+# Figure 1 — Minimalist Architecture Overview
 # ─────────────────────────────────────────────────────────────────────────────
 
 def make_architecture():
-    fig, ax = plt.subplots(figsize=(13, 6))
+    fig, ax = plt.subplots(figsize=(12.5, 6.6))
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
 
-    fig.text(0.5, 0.97, "DPSOM-ECG Architecture",
-             ha="center", va="top", fontsize=13, fontweight="bold",
-             color=FG, fontfamily="monospace")
+    # Title + concise subtitle
+    ax.text(0.03, 0.965, "DPSOM-ECG Architecture",
+            ha="left", va="top", fontsize=15, fontweight="bold",
+            color=TEXT_MAIN, fontfamily="sans-serif")
+    ax.text(0.03, 0.92, "Unsupervised morphology clustering on a toroidal SOM with supervised demographic branches",
+            ha="left", va="top", fontsize=9.1, color=TEXT_SUB, fontfamily="sans-serif")
 
-    # ── row y positions ──────────────────────────────────────────────────────
-    Y_DATA  = 0.82
-    Y_ENC   = 0.62
-    Y_LAT   = 0.42
-    Y_BOT   = 0.22
+    # Subtle column positions
+    X_DEC   = 0.13
+    X_MORPH = 0.36
+    X_AGE   = 0.61
+    X_SEX   = 0.83
 
-    BW, BH  = 0.13, 0.09   # default box width / height
-    SM      = 0.10          # small box width
+    Y_IN  = 0.80
+    Y_ENC = 0.60
+    Y_LAT = 0.435
+    Y_OUT = 0.245
+    Y_REC = 0.08
 
-    # ── ECG Record ───────────────────────────────────────────────────────────
-    box(ax, (0.12, Y_DATA), BW, BH, "ECG Record", C_IN,
-        sublabel="12 leads × T")
+    BW, BH = 0.175, 0.088
 
-    arrow_h(ax, 0.19, 0.29, Y_DATA)
-    box(ax, (0.35, Y_DATA), BW + 0.02, BH, "Beat Segmentation", C_IN,
-        sublabel="R-peak detection")
+    # ── Subtle background zones: Unsupervised vs Supervised ──────────────────
+    unsup_zone = FancyBboxPatch(
+        (0.025, 0.175), 0.445, 0.515,
+        boxstyle="round,pad=0,rounding_size=0.020",
+        facecolor="#f8fbff", edgecolor="#93c5fd", linewidth=1.1, linestyle="--", zorder=0,
+    )
+    ax.add_patch(unsup_zone)
+    pill(ax, (0.145, 0.690), "UNSUPERVISED  (no disease labels)",
+         color="#2563eb", bg="#eff6ff", border="#93c5fd", fontsize=7.0)
 
-    arrow_h(ax, 0.43, 0.52, Y_DATA)
-    box(ax, (0.57, Y_DATA), BW, BH, "Beat Repr.", C_IN,
-        sublabel="[B × N × C × T]")
+    sup_zone = FancyBboxPatch(
+        (0.50, 0.022), 0.472, 0.668,
+        boxstyle="round,pad=0,rounding_size=0.020",
+        facecolor="#f5fefa", edgecolor="#5eead4", linewidth=1.1, linestyle="--", zorder=0,
+    )
+    ax.add_patch(sup_zone)
+    pill(ax, (0.725, 0.690), "SUPERVISED  (age & sex labels)",
+         color="#0d9488", bg="#f0fdfa", border="#5eead4", fontsize=7.0)
 
-    # amplitude context (AMP) side branch
-    arrow_v(ax, 0.57, Y_DATA - 0.045, Y_ENC + 0.045, color="#a6adc8")
-    box(ax, (0.57, Y_ENC), BW + 0.04, BH, "LeadWise Conv\nEncoder", C_ENC,
-        sublabel="k=7, ch 32→64→512")
+    # ── Row 1: Input & preprocessing ─────────────────────────────────────────
+    card(ax, (0.14, Y_IN), 0.18, 0.080, "12-Lead ECG", "10 s @ 100 Hz", accent=ACC_INPUT)
+    arrow(ax, 0.23, Y_IN, 0.29, Y_IN)
+    card(ax, (0.40, Y_IN), 0.22, 0.080, "Beat Segm. & Norm", "R-peaks · 1.2 s windows", accent=ACC_INPUT)
 
-    # AMP context line from encoder outward
-    # draw AMP context box to the right of encoder
-    ax.annotate("", xy=(0.72, Y_ENC), xytext=(0.64, Y_ENC),
-                arrowprops=dict(arrowstyle="->,head_width=0.015,head_length=0.012",
-                                color=ARROW, lw=1.3), zorder=2)
-    box(ax, (0.79, Y_ENC), SM + 0.04, BH, "AMP Context", C_IN,
-        sublabel="ampl.+phase (2C)")
+    # Split from Beat Segm. & Norm → Normalized Beats (to encoders) & Amplitude Stats (pre-norm)
+    arrow(ax, 0.51, Y_IN, 0.555, Y_IN)
+    card(ax, (0.645, Y_IN), 0.18, 0.080, "Normalized Beats", "N × 12 × 120", accent=ACC_INPUT)
 
-    # three latent branches  ─────────────────────────────────────────────────
-    # z_morph (left), z_age (centre), z_sex (right)
-    X_MORPH = 0.35
-    X_AGE   = 0.57
-    X_SEX   = 0.79
+    # Pre-norm amplitude stats branch off Beat Segm. & Norm cleanly over the top
+    elbow(ax, [(0.40, Y_IN + 0.040), (0.40, 0.872), (0.87, 0.872), (0.87, Y_IN + 0.040)],
+          color=ARROW_COL, lw=1.2)
+    card(ax, (0.87, Y_IN), 0.18, 0.080, "Amplitude Stats", "Pre-norm σ & max", accent=ACC_INPUT)
 
-    # arrows from encoder down to latents
-    for xd in [X_MORPH, X_AGE, X_SEX]:
-        ax.annotate("", xy=(xd, Y_LAT + 0.045), xytext=(0.57, Y_ENC - 0.045),
-                    arrowprops=dict(arrowstyle="->,head_width=0.015,head_length=0.012",
-                                    color=ARROW, lw=1.1, connectionstyle="arc3,rad=0.0"),
-                    zorder=2)
+    # ── Row 2: Three independent encoders ────────────────────────────────────
+    for xc in (X_MORPH, X_AGE, X_SEX):
+        arrow(ax, 0.645, Y_IN - 0.040, xc, Y_ENC + BH / 2)
 
-    box(ax, (X_MORPH, Y_LAT), BW + 0.02, BH, "z  (morphology)", C_LATENT,
-        sublabel="μ,σ  dim=32  VAE")
-    box(ax, (X_AGE,   Y_LAT), BW, BH, "z_age", C_LATENT,
-        sublabel="dim=8 (25%)")
-    box(ax, (X_SEX,   Y_LAT), BW, BH, "z_sex", C_LATENT,
-        sublabel="dim=8 (25%)")
+    card(ax, (X_MORPH, Y_ENC), BW, BH, "Morphology Encoder", "Lead-wise Conv + SE", accent=ACC_MORPH)
+    card(ax, (X_AGE,   Y_ENC), BW, BH, "Age Encoder",        "Lead-wise Conv + SE", accent=ACC_DEMO)
+    card(ax, (X_SEX,   Y_ENC), BW, BH, "Sex Encoder",        "Lead-wise Conv + SE", accent=ACC_DEMO)
 
-    # ── SOM (below z_morph) ──────────────────────────────────────────────────
-    arrow_v(ax, X_MORPH, Y_LAT - 0.045, Y_BOT + 0.045)
-    box(ax, (X_MORPH, Y_BOT), BW + 0.04, BH, "Toroidal SOM", C_SOM,
-        sublabel="8×8 grid  q(z)")
+    # ── Row 3: Latents ───────────────────────────────────────────────────────
+    arrow(ax, X_MORPH, Y_ENC - BH / 2, X_MORPH, Y_LAT + BH / 2)
+    arrow(ax, X_AGE,   Y_ENC - BH / 2, X_AGE,   Y_LAT + BH / 2)
+    arrow(ax, X_SEX,   Y_ENC - BH / 2, X_SEX,   Y_LAT + BH / 2)
 
-    # ── Decoder (left of SOM) ────────────────────────────────────────────────
-    ax.annotate("", xy=(0.12, Y_BOT + 0.0), xytext=(X_MORPH - 0.08, Y_BOT),
-                arrowprops=dict(arrowstyle="->,head_width=0.015,head_length=0.012",
-                                color=ARROW, lw=1.1), zorder=2)
-    box(ax, (0.12, Y_BOT), BW, BH, "Decoder", C_DEC,
-        sublabel="ConvTranspose")
+    card(ax, (X_MORPH, Y_LAT), BW, BH, "Morphology  z", "32-d VAE  (μ, σ)", accent=ACC_MORPH)
+    card(ax, (X_AGE,   Y_LAT), BW, BH, "Age  z_age",    "8-d latent",       accent=ACC_DEMO)
+    card(ax, (X_SEX,   Y_LAT), BW, BH, "Sex  z_sex",    "8-d latent",       accent=ACC_DEMO)
 
-    # ── Age prediction head ──────────────────────────────────────────────────
-    # age-correction feeds into age head
-    arrow_v(ax, X_AGE, Y_LAT - 0.045, Y_BOT + 0.045)
-    box(ax, (X_AGE, Y_BOT), BW + 0.02, BH, "Age Head", C_PRED,
-        sublabel="CE  88 bins")
+    # ── Row 4: Decoder, SOM, Age Head, Sex Head ──────────────────────────────
+    # Decoder from unmodified z
+    arrow(ax, X_MORPH - BW / 2, Y_LAT, X_DEC, Y_OUT + BH / 2, rad=0.22)
+    card(ax, (X_DEC, Y_OUT), 0.175, BH, "ECG Decoder", "Conv + SE + FiLM(z)", accent=ACC_DEC)
 
-    # age correction side-feed from SOM
-    ax.annotate("", xy=(X_AGE - 0.075, Y_BOT), xytext=(X_MORPH + 0.075, Y_BOT),
-                arrowprops=dict(arrowstyle="->,head_width=0.013,head_length=0.010",
-                                color=C_CORR, lw=1.2,
-                                connectionstyle="arc3,rad=-0.3"),
-                zorder=2)
-    ax.text((X_MORPH + X_AGE) / 2, Y_BOT + 0.07,
-            "top-k SOM\n embeddings", fontsize=6.5, ha="center",
-            color=C_CORR, fontfamily="monospace", zorder=5)
+    # Residualization → Toroidal SOM
+    arrow(ax, X_MORPH, Y_LAT - BH / 2, X_MORPH, Y_OUT + BH / 2)
+    pill(ax, (X_MORPH, (Y_LAT + Y_OUT) / 2), "− sup. age/sex probes", color="#0f766e", bg="#f0fdfa", border="#5eead4", fontsize=6.7)
+    card(ax, (X_MORPH, Y_OUT), BW, BH, "Toroidal SOM", "8×8 grid  ·  q(z)", accent=ACC_SOM)
 
-    # ── Sex prediction head ──────────────────────────────────────────────────
-    arrow_v(ax, X_SEX, Y_LAT - 0.045, Y_BOT + 0.045)
-    box(ax, (X_SEX, Y_BOT), BW, BH, "Sex Head", C_PRED,
-        sublabel="BCE  binary")
+    # Age & Sex heads
+    arrow(ax, X_AGE, Y_LAT - BH / 2, X_AGE, Y_OUT + BH / 2)
+    card(ax, (X_AGE, Y_OUT), BW, BH, "Age Head", "88 bins (CE) + λ·corr", accent=ACC_DEMO)
 
-    # ── AMP context → heads ──────────────────────────────────────────────────
-    for xh in [X_AGE, X_SEX]:
-        ax.annotate("", xy=(xh + BW / 2, Y_BOT + 0.01),
-                    xytext=(0.79 - (SM + 0.04) / 2, Y_ENC - 0.045),
-                    arrowprops=dict(arrowstyle="->,head_width=0.012,head_length=0.010",
-                                    color="#a6adc8", lw=0.9,
-                                    connectionstyle="arc3,rad=0.15"),
-                    zorder=2)
+    arrow(ax, X_SEX, Y_LAT - BH / 2, X_SEX, Y_OUT + BH / 2)
+    card(ax, (X_SEX, Y_OUT), BW, BH, "Sex Head", "Binary logit (BCE)", accent=ACC_DEMO)
 
-    # ── Record attention pooling label ────────────────────────────────────────
-    ax.text(0.5, 0.07,
-            "Record-level attention pooling  (η)  aggregates beat predictions → record-level age / sex",
-            ha="center", va="center", fontsize=7.5, color=FG,
-            fontfamily="monospace", style="italic")
+    # Age correction bridge (SOM → Age Head, stop-grad)
+    arrow(ax, X_MORPH + BW / 2, Y_OUT, X_AGE - BW / 2, Y_OUT, color=ACC_CORR[1], lw=1.6)
+    pill(ax, ((X_MORPH + X_AGE) / 2, Y_OUT + 0.044), "top-k q(μ.detach)", color=ACC_CORR[2], bg="#fdf2f8", border="#fbcfe8", fontsize=6.6)
 
-    # ── legend ────────────────────────────────────────────────────────────────
-    legend_items = [
-        (C_IN,     "Input / data"),
-        (C_ENC,    "Encoder"),
-        (C_LATENT, "Latent space (VAE)"),
-        (C_SOM,    "SOM"),
-        (C_DEC,    "Decoder"),
-        (C_PRED,   "Prediction head"),
-    ]
-    for i, (col, lbl) in enumerate(legend_items):
-        px = 0.01 + i * 0.165
-        rect = FancyBboxPatch((px, 0.01), 0.015, 0.025,
-                              boxstyle="round,pad=0,rounding_size=0.004",
-                              facecolor=col, edgecolor=FG, linewidth=0.8, zorder=3)
-        ax.add_patch(rect)
-        ax.text(px + 0.02, 0.022, lbl, fontsize=6.5, va="center",
-                color=FG, fontfamily="monospace")
+    # Amplitude Stats rail → Age Head, Sex Head, and Record Attention Pooling
+    X_RAIL = 0.948
+    elbow(ax, [(0.948, Y_IN - 0.040), (X_RAIL, 0.335), (X_AGE + 0.055, 0.335), (X_AGE + 0.055, Y_OUT + BH / 2)],
+          color=ARROW_COL, lw=1.0, ls="--")
+    elbow(ax, [(X_RAIL, 0.355), (X_SEX + 0.055, 0.355), (X_SEX + 0.055, Y_OUT + BH / 2)],
+          color=ARROW_COL, lw=1.0, ls="--")
+    elbow(ax, [(X_RAIL, 0.335), (X_RAIL, Y_REC), (0.915, Y_REC)],
+          color=ARROW_COL, lw=1.0, ls="--")
 
-    fig.tight_layout()
+    # ── Row 5: Record-level pooling ──────────────────────────────────────────
+    arrow(ax, X_AGE, Y_OUT - BH / 2, 0.65, Y_REC + 0.040, color=ACC_DEMO[1], lw=1.3)
+    arrow(ax, X_SEX, Y_OUT - BH / 2, 0.79, Y_REC + 0.040, color=ACC_DEMO[1], lw=1.3)
+    card(
+        ax, (0.72, Y_REC), 0.39, 0.078,
+        "Record-Level Attention Pooling",
+        "Pools detached beat preds → Record Age & Sex  (via μ.detach & amp)",
+        accent=ACC_CORR, title_size=9.1, sub_size=7.0,
+    )
+
+    fig.tight_layout(pad=0.6)
     out = os.path.join(OUT_DIR, "architecture.png")
-    fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=BG)
+    fig.savefig(out, dpi=200, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
     print(f"Saved {out}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Figure 2 – Loss breakdown
+# Figure 2 — Minimalist Loss Overview
 # ─────────────────────────────────────────────────────────────────────────────
 
 def make_loss():
-    # Loss terms with (symbol, weight, description, colour, group)
-    terms = [
-        # group A – reconstruction
-        ("L_recon",   "θ",      "Huber reconstruction",         C_DEC,    "Reconstruction"),
-        ("L_KL",      "θ · p",  "KL(q(z) ‖ N(0,I))",           C_LATENT, "Reconstruction"),
-        # group B – SOM
-        ("L_commit",  "γ",      "KL(p ‖ q)  SOM commitment",   C_SOM,    "SOM"),
-        ("L_smooth",  "β",      "neighbourhood smoothing",      C_SOM,    "SOM"),
-        # group C – temporal
-        ("L_temporal","τ",      "consecutive-beat smoothness",  C_ENC,    "Temporal"),
-        # group D – demographics (beat-level)
-        ("L_age_beat","δ_age",  "beat-level age  (CE, 88 bins)",C_PRED,   "Demographics"),
-        ("L_sex_beat","δ_sex",  "beat-level sex  (BCE)",        C_PRED,   "Demographics"),
-        # group E – record-level
-        ("L_age_rec", "η·δ_age·0.4", "record-level age  (L1, attn pool)", C_CORR, "Record-level"),
-        ("L_sex_rec", "η·δ_sex",     "record-level sex  (BCE, attn pool)",C_CORR, "Record-level"),
-    ]
-
-    groups = ["Reconstruction", "SOM", "Temporal", "Demographics", "Record-level"]
-    group_colors = {
-        "Reconstruction": "#313244",
-        "SOM":            "#2a2a3e",
-        "Temporal":       "#2e2e40",
-        "Demographics":   "#292940",
-        "Record-level":   "#2c2c3e",
-    }
-
-    fig, ax = plt.subplots(figsize=(13, 5.5))
+    fig, ax = plt.subplots(figsize=(12.2, 4.9))
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
 
-    fig.text(0.5, 0.97, "DPSOM-ECG  ·  Total Loss Breakdown",
-             ha="center", va="top", fontsize=13, fontweight="bold",
-             color=FG, fontfamily="monospace")
+    ax.text(0.03, 0.95, "DPSOM-ECG Training Objectives",
+            ha="left", va="top", fontsize=15, fontweight="bold",
+            color=TEXT_MAIN, fontfamily="sans-serif")
+    ax.text(0.03, 0.895, "Phase 3 joint loss combining reconstruction, toroidal clustering, temporal consistency, and demographics",
+            ha="left", va="top", fontsize=9.0, color=TEXT_SUB, fontfamily="sans-serif")
 
-    # ── group headers ─────────────────────────────────────────────────────────
-    COL_W  = 0.18
-    COL_PAD = 0.01
-    N_COLS  = len(groups)
-    total_w = N_COLS * COL_W + (N_COLS - 1) * COL_PAD
-    x_start = (1 - total_w) / 2
+    columns = [
+        ("Reconstruction", ACC_DEC, [
+            ("θ · L_recon", "Masked Huber + outside L1"),
+            ("θ · w_KL · L_KL", "VAE prior KL  (w_KL = 2.5)"),
+        ]),
+        ("SOM Clustering", ACC_SOM, [
+            ("γ · L_commit", "KL(p ‖ q) commitment"),
+            ("β · L_smooth", "Toroidal neighbourhood"),
+        ]),
+        ("Temporal", ACC_MORPH, [
+            ("τ · L_temporal", "Ordered intra-record beat diff"),
+        ]),
+        ("Demographics", ACC_DEMO, [
+            ("δ_age · L_age", "Beat age (88-bin CE)"),
+            ("δ_sex · L_sex", "Beat sex (BCE)"),
+        ]),
+        ("Record Pooling", ACC_CORR, [
+            ("η · L_record", "Attention-pooled age (L1)\n& sex (BCE)"),
+        ]),
+    ]
 
-    group_xs = {}
-    for i, g in enumerate(groups):
-        gx = x_start + i * (COL_W + COL_PAD) + COL_W / 2
-        group_xs[g] = gx
+    n_cols = len(columns)
+    margin = 0.03
+    gap    = 0.016
+    col_w  = (1.0 - 2 * margin - (n_cols - 1) * gap) / n_cols
 
-    HEADER_Y = 0.84
-    TERM_Y_START = 0.70
-    TERM_DY      = 0.135
-    BOX_W  = COL_W - 0.01
-    BOX_H  = 0.08
+    Y_HEAD = 0.70
+    Y_TOP  = 0.535
+    DY     = 0.160
+    CARD_H = 0.120
 
-    # draw group headers
-    for g in groups:
-        gx = group_xs[g]
-        hpatch = FancyBboxPatch(
-            (gx - BOX_W / 2, HEADER_Y - 0.035), BOX_W, 0.065,
-            boxstyle="round,pad=0,rounding_size=0.012",
-            facecolor=group_colors[g], edgecolor=FG, linewidth=1.0, zorder=3,
-        )
-        ax.add_patch(hpatch)
-        ax.text(gx, HEADER_Y, g, ha="center", va="center",
-                fontsize=8.5, fontweight="bold", color=FG,
-                fontfamily="monospace", zorder=4)
+    # Subtle supervision group bars above columns 0-2 (Unsupervised) and 3-4 (Supervised)
+    unsup_x0 = margin
+    unsup_x1 = margin + 3 * col_w + 2 * gap
+    sup_x0   = margin + 3 * (col_w + gap)
+    sup_x1   = 1.0 - margin
 
-    # draw term boxes per group
-    group_term_count = {g: 0 for g in groups}
-    for (sym, weight, desc, color, group) in terms:
-        gx  = group_xs[group]
-        idx = group_term_count[group]
-        ty  = TERM_Y_START - idx * TERM_DY
-
-        # box
-        tpatch = FancyBboxPatch(
-            (gx - BOX_W / 2, ty - BOX_H / 2), BOX_W, BOX_H,
-            boxstyle="round,pad=0,rounding_size=0.010",
-            facecolor=color, edgecolor=FG, linewidth=1.0, zorder=3,
-        )
-        ax.add_patch(tpatch)
-        # symbol + weight
-        ax.text(gx, ty + 0.014,
-                f"{weight} · {sym}", ha="center", va="center",
-                fontsize=8.5, fontweight="bold", color="black",
-                fontfamily="monospace", zorder=4)
-        # description
-        ax.text(gx, ty - 0.016, desc, ha="center", va="center",
-                fontsize=6.8, color="#313244",
-                fontfamily="monospace", zorder=4)
-
-        # connector line from header to first term
-        if idx == 0:
-            ax.plot([gx, gx], [HEADER_Y - 0.035, ty + BOX_H / 2],
-                    color=FG, lw=0.8, zorder=2, alpha=0.4)
-        else:
-            prev_ty = TERM_Y_START - (idx - 1) * TERM_DY
-            ax.plot([gx, gx], [prev_ty - BOX_H / 2, ty + BOX_H / 2],
-                    color=FG, lw=0.8, zorder=2, alpha=0.4)
-
-        group_term_count[group] += 1
-
-    # ── total loss equation ────────────────────────────────────────────────────
-    eq = (
-        r"$\mathcal{L}_\mathrm{total}$"
-        "  =  "
-        r"$\theta\,\mathcal{L}_\mathrm{recon}$"
-        "  +  "
-        r"$\gamma\,\mathcal{L}_\mathrm{commit}$"
-        "  +  "
-        r"$\beta\,\mathcal{L}_\mathrm{smooth}$"
-        "  +  "
-        r"$\tau\,\mathcal{L}_\mathrm{temporal}$"
-        "  +  "
-        r"$\delta_\mathrm{age}\,\mathcal{L}_\mathrm{age}$"
-        "  +  "
-        r"$\delta_\mathrm{sex}\,\mathcal{L}_\mathrm{sex}$"
-        "  +  "
-        r"$\eta\,\mathcal{L}_\mathrm{record}$"
-    )
-    ax.text(0.5, 0.085, eq, ha="center", va="center",
-            fontsize=9.5, color=FG, zorder=5)
-
-    # bounding box for equation
-    eq_box = FancyBboxPatch(
-        (0.03, 0.055), 0.94, 0.06,
+    ax.add_patch(FancyBboxPatch(
+        (unsup_x0, 0.785), unsup_x1 - unsup_x0, 0.046,
         boxstyle="round,pad=0,rounding_size=0.012",
-        facecolor="#1a1a2e", edgecolor=FG, linewidth=0.9, zorder=2,
+        facecolor="#eff6ff", edgecolor="#93c5fd", lw=1.0, zorder=1,
+    ))
+    ax.text((unsup_x0 + unsup_x1) / 2, 0.808, "UNSUPERVISED  (no disease labels)",
+            ha="center", va="center", fontsize=7.6, fontweight="bold",
+            color="#2563eb", fontfamily="sans-serif", zorder=2)
+
+    ax.add_patch(FancyBboxPatch(
+        (sup_x0, 0.785), sup_x1 - sup_x0, 0.046,
+        boxstyle="round,pad=0,rounding_size=0.012",
+        facecolor="#f0fdfa", edgecolor="#5eead4", lw=1.0, zorder=1,
+    ))
+    ax.text((sup_x0 + sup_x1) / 2, 0.808, "SUPERVISED  (age & sex labels)",
+            ha="center", va="center", fontsize=7.6, fontweight="bold",
+            color="#0d9488", fontfamily="sans-serif", zorder=2)
+
+    for i, (heading, accent, items) in enumerate(columns):
+        cx = margin + i * (col_w + gap) + col_w / 2
+        fill, border, accent_text = accent
+
+        # Minimal column header underline
+        ax.text(cx, Y_HEAD + 0.018, heading, ha="center", va="bottom",
+                fontsize=9.3, fontweight="bold", color=accent_text, fontfamily="sans-serif")
+        ax.plot([cx - col_w * 0.44, cx + col_w * 0.44], [Y_HEAD, Y_HEAD],
+                color=border, lw=2.0, solid_capstyle="round")
+
+        for j, (term, desc) in enumerate(items):
+            cy = Y_TOP - j * DY
+            patch = FancyBboxPatch(
+                (cx - col_w / 2, cy - CARD_H / 2), col_w, CARD_H,
+                boxstyle="round,pad=0,rounding_size=0.015",
+                linewidth=1.2, edgecolor=border, facecolor=fill, zorder=3,
+            )
+            ax.add_patch(patch)
+            ax.text(cx, cy + 0.024, term, ha="center", va="center",
+                    fontsize=8.8, fontweight="semibold", color=TEXT_MAIN,
+                    fontfamily="sans-serif", zorder=4)
+            ax.text(cx, cy - 0.022, desc, ha="center", va="center",
+                    fontsize=7.1, color=TEXT_SUB,
+                    fontfamily="sans-serif", zorder=4)
+
+    # Clean summary equation bar
+    eq_box = FancyBboxPatch(
+        (margin, 0.115), 1.0 - 2 * margin, 0.115,
+        boxstyle="round,pad=0,rounding_size=0.016",
+        facecolor=FILL_NEUT, edgecolor=BORDER_NEUT, linewidth=1.1, zorder=2,
     )
     ax.add_patch(eq_box)
 
-    fig.tight_layout()
+    eq = (
+        r"$\mathcal{L}_{\mathrm{total}} \;=\; "
+        r"\theta(\mathcal{L}_{\mathrm{recon}} + w_{\mathrm{KL}}\mathcal{L}_{\mathrm{KL}})"
+        r" \;+\; \gamma\,\mathcal{L}_{\mathrm{commit}}"
+        r" \;+\; \beta\,\mathcal{L}_{\mathrm{smooth}}"
+        r" \;+\; \tau\,\mathcal{L}_{\mathrm{temporal}}"
+        r" \;+\; \delta_{\mathrm{age}}\mathcal{L}_{\mathrm{age}}"
+        r" \;+\; \delta_{\mathrm{sex}}\mathcal{L}_{\mathrm{sex}}"
+        r" \;+\; \eta\,\mathcal{L}_{\mathrm{record}}$"
+    )
+    ax.text(0.5, 0.172, eq, ha="center", va="center", fontsize=10.4, color=TEXT_MAIN, zorder=4)
+
+    ax.text(
+        0.5, 0.055,
+        "α = 10.0 is the Student-t degrees-of-freedom parameter in q(z), not a loss weight.",
+        ha="center", va="center", fontsize=7.8, color=TEXT_SUB,
+        fontfamily="sans-serif", style="italic",
+    )
+
+    fig.tight_layout(pad=0.6)
     out = os.path.join(OUT_DIR, "loss.png")
-    fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=BG)
+    fig.savefig(out, dpi=200, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
     print(f"Saved {out}")
 

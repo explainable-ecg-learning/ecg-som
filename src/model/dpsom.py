@@ -48,6 +48,8 @@ class DPSOM_ECG(nn.Module):
         age_corr_ramp_epochs: int = 10,
         # SOM initialisation
         som_init_std: float = 0.05,
+        # Context metadata dimension (2*C for amp stats, or 2*C+2 with RR intervals)
+        amp_context_dim: int | None = None,
     ):
         super().__init__()
         self.latent_dim = latent_dim
@@ -75,7 +77,7 @@ class DPSOM_ECG(nn.Module):
         self.max_age = 89
         self.num_age_bins = 88
 
-        self.amp_context_dim = 2 * self.input_channels
+        self.amp_context_dim = int(amp_context_dim) if amp_context_dim is not None else 2 * self.input_channels
         self.amp_proj_dim = 12
         self.amp_proj_age = nn.Sequential(
             nn.Linear(self.amp_context_dim, self.amp_proj_dim),
@@ -136,6 +138,9 @@ class DPSOM_ECG(nn.Module):
             enc_out_channels=int(self.encoder.out_channels),
             conv_out_len=int(self.encoder.out_length),
             dropout=self.dropout,
+            base_channels_1=encoder_base_channels_1,
+            kernel_size=encoder_kernel_size,
+            padding=encoder_kernel_size // 2,
         )
 
         self.age_head = nn.Sequential(
@@ -182,15 +187,15 @@ class DPSOM_ECG(nn.Module):
         self.register_buffer("_prior_scale", torch.ones(self.z_shape_dim) * float(self.prior_var))
         self.register_buffer("age_bin_values", torch.linspace(self.min_age, self.max_age, steps=self.num_age_bins))
 
-        self._train_epoch = 0
+        self.register_buffer("_train_epoch", torch.tensor(0, dtype=torch.long))
         self._p_tensor = None
         self.register_buffer("_probe_ready", torch.tensor(False, dtype=torch.bool))
         self.register_buffer("_age_dir", torch.zeros(self.latent_dim))
         self.register_buffer("_sex_probe_ready", torch.tensor(False, dtype=torch.bool))
         self.register_buffer("_sex_dir", torch.zeros(self.latent_dim))
 
-    def get_epoch(self):
-        return self._train_epoch
+    def get_epoch(self) -> int:
+        return int(self._train_epoch.item())
 
     def inc_epoch(self):
         self._train_epoch += 1
@@ -285,7 +290,7 @@ class DPSOM_ECG(nn.Module):
         )
 
     def _age_corr_lambda(self) -> float:
-        t = min(1.0, float(self._train_epoch) / float(self.age_corr_ramp_epochs))
+        t = min(1.0, float(self._train_epoch.item()) / float(self.age_corr_ramp_epochs))
         return float(self.age_corr_lambda_max) * t
 
     def age_logits_with_disease_correction(
@@ -406,7 +411,7 @@ class DPSOM_ECG(nn.Module):
     def q(self, z: torch.Tensor) -> torch.Tensor:
         dist_flat = self.z_dist_flat(z)
         eps = torch.finfo(dist_flat.dtype).eps
-        # Clamp alpha away from zero to avoid NaN when alpha=0 (no_som_smooth variant)
+        # Clamp Student-t degrees-of-freedom alpha away from zero to avoid NaN
         alpha = max(float(self.alpha), 1e-4)
         q = eps + 1.0 / torch.pow(1.0 + dist_flat / alpha, (alpha + 1.0) / 2.0)
         return q / q.sum(dim=1, keepdim=True)
@@ -448,10 +453,12 @@ class DPSOM_ECG(nn.Module):
         return -torch.mean((torch.log(q_neighbours + eps).sum(dim=-1) * new_q).sum(dim=-1))
 
     def loss_commit_s(self, z_ng: torch.Tensor) -> torch.Tensor:
-        return torch.mean((z_ng - self.z_q(z_ng)) ** 2)
+        z_res = self.residualize_latent(z_ng)
+        return torch.mean((z_res - self.z_q(z_ng)) ** 2)
 
     def loss_som_s(self, z_ng: torch.Tensor) -> torch.Tensor:
-        return torch.mean((z_ng.unsqueeze(1) - self.z_q_neighbors(z_ng)) ** 2)
+        z_res = self.residualize_latent(z_ng)
+        return torch.mean((z_res.unsqueeze(1) - self.z_q_neighbors(z_ng)) ** 2)
 
     def loss_a(self, z: torch.Tensor):
         z_ng = z.detach()
@@ -578,9 +585,12 @@ class DPSOM_ECG(nn.Module):
         return (total_loss, loss_elbo, loss_commit, loss_som,
                 rc, kl, sl, da, ds, loss_temporal, record_loss, record_age_loss, record_sex_loss)
 
-    def predict_dual_age(self, beats, beat_valid, amp_context):
+    def predict_dual_age(self, beats, beat_valid, amp_context, precomputed=None):
         B, N, C, T = beats.shape
-        z, zage, zsex, mu, _, _ = self.forward_batch(beats, beat_valid)
+        if precomputed is not None:
+            zage, zsex, mu = precomputed
+        else:
+            _, zage, zsex, mu, _, _ = self.forward_batch(beats, beat_valid)
 
         amp_flat  = amp_context.reshape(B * N, -1)
         mu_flat   = mu.reshape(B * N, -1)

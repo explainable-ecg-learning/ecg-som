@@ -4,13 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ECG-SOM Explorer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<header>
-  <span class="brand">ECG-SOM Explorer</span>
+<header class="site-topbar">
+  <div class="topbar-inner">
+    <span class="brand">
+      <span class="brand-thin">ECG-SOM</span> <span class="brand-bold">Explorer</span>
+    </span>
+    <span class="topbar-meta">Toroidal Self-Organizing Map · PTB-XL</span>
+  </div>
 </header>
 
 <div class="layout">
@@ -19,13 +27,13 @@
   <aside class="sidebar">
 
     <div class="ctrl-group">
-      <label class="ctrl-label">Checkpoint</label>
+      <label class="ctrl-label" for="ckpt-select">Checkpoint</label>
       <select id="ckpt-select"></select>
     </div>
 
     <div class="ctrl-group">
-      <label class="ctrl-label">Dataset path</label>
-      <input type="text" id="data-path" placeholder="data/ptbxl_100_T-12ms.pkl">
+      <label class="ctrl-label" for="data-path">Dataset (data/)</label>
+      <select id="data-path"></select>
     </div>
 
     <div class="ctrl-group">
@@ -39,9 +47,10 @@
     </div>
 
     <div class="ctrl-group">
-      <label class="ctrl-label">Heatmap colour</label>
+      <label class="ctrl-label" for="color-mode">Heatmap colour</label>
       <select id="color-mode">
-        <option value="majority" selected>Majority class</option>
+        <option value="majority" selected>Majority class (ground truth)</option>
+        <option value="predicted">Predicted class (model)</option>
         <option value="count">Sample count</option>
       </select>
     </div>
@@ -54,6 +63,20 @@
     </label>
 
     <div id="status" class="status-box"></div>
+
+    <!-- ── Predict New ECG ── -->
+    <div id="predict-panel" class="ctrl-group section-divider" style="display:none;">
+      <label class="ctrl-label" for="new-ecg-path">Predict New ECG</label>
+      <input type="text" id="new-ecg-path" placeholder="File in data/ (.hea, .npy, .npz, .csv)">
+      <div class="upload-row">
+        <input type="file" id="new-ecg-file" accept=".npy,.npz,.csv" class="file-input">
+        <input type="number" id="new-ecg-fs" value="100" min="50" max="1000" step="10"
+               title="Sampling rate (Hz)" class="fs-input">
+        <span class="unit-label">Hz</span>
+      </div>
+      <button id="predict-btn" class="btn-secondary">Predict &amp; Locate on SOM</button>
+      <div id="predict-result" class="predict-result" style="display:none;"></div>
+    </div>
 
     <div id="class-legend" class="class-legend" style="display:none"></div>
 

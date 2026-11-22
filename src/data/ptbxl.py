@@ -41,7 +41,7 @@ if __name__ == "__main__":
     dataset_path = f"./data/ptbxl_{fs}_T-12ms.pkl"
 
     ds = ECG_Dataset(fs)
-    ds.import_ptbxl(base_path="/nfs/data8/schlegel/git/ecg-cbm/data/ptb-xl")
+    ds.import_ptbxl(base_path="./data/PTB-XL")
     ds.save(dataset_path)
 
     ds = ECG_Dataset.load(dataset_path)
