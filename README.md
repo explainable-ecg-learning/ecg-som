@@ -19,41 +19,47 @@ phases, config defaults) see [`docs/architecture.md`](docs/architecture.md).
 ecg-som/
 ├── src/                        # Main project code
 │   ├── config.py               # Hyperparameters and configuration
+│   ├── inference.py            # New-ECG converter & prediction CLI/API
 │   ├── scheduler.py            # Exponential decay LR scheduler
 │   ├── model/
 │   │   ├── dpsom.py            # DPSOM-ECG model (toroidal SOM, disentanglement, age correction)
 │   │   ├── codec.py            # Lead-wise convolutional encoder / decoder
 │   │   └── layers.py           # Shared building blocks (SE block, FiLM)
 │   ├── data/
-│   │   ├── dataset.py          # PTB-XL dataset loading, preprocessing, splits
-│   │   ├── generator.py        # Batch and record-level data generators
+│   │   ├── dataset.py          # PTB-XL dataset loading, quality curation, splits
+│   │   ├── generator.py        # GPU-resident vectorized record batch generator
 │   │   ├── ptbxl.py            # PTB-XL specific import helpers
 │   │   ├── record.py           # Per-record ECG processing and beat segmentation
 │   │   └── signal.py           # Low-level signal utilities
 │   ├── training/
-│   │   └── trainer.py          # Training, evaluation and checkpoint routines
+│   │   └── trainer.py          # Training CLI, evaluation, best-checkpoint & history logging
 │   └── utils/
 │       ├── make_figures.py     # Generates docs/architecture.png and docs/loss.png
-│       ├── metrics.py          # Cluster purity, disentanglement & SOM topology metrics
+│       ├── metrics.py          # Cluster purity, disentanglement & toroidal SOM metrics
 │       └── visualization.py    # SOM visualisation helpers
 ├── docs/                       # Architecture writeup and schematic figures
 │   ├── architecture.md
 │   ├── architecture.png
 │   └── loss.png
 ├── explorer/                   # Interactive result explorer (FastAPI + D3)
-│   ├── server.py               # Backend entry point
+│   ├── server.py               # Backend entry point (data/-scoped, lazy cells, gzip)
+│   ├── export_compact_data.py  # Exports compact per-split .npz files for fast loading
 │   ├── requirements.txt        # Additional explorer dependencies
 │   ├── Dockerfile
 │   ├── docker-compose.yml
 │   └── static/                 # Frontend assets
 ├── ablation/                   # Ablation study scripts and results
 │   ├── ablation.py             # Ablation variants and runner (uses src/)
-│   ├── run_ablation_parallel.sh# Parallel multi-GPU ablation launcher
+│   ├── run_ablation_parallel.sh# Parallel 2-GPU ablation launcher
 │   ├── merge_ablation_results.py
-│   └── ablation_results*.csv/json
+│   └── ablation_results_all.csv/json
+├── tests/
+│   └── test_dpsom.py           # Unit & integration smoke tests
+├── data/                       # Dataset cache & error_labels.csv (binaries not versioned)
 ├── logs/                       # Training/evaluation output artifacts (not versioned)
 ├── models/                     # Saved model checkpoints (not versioned)
 ├── requirements.txt            # Core Python dependencies
+├── .dockerignore
 └── README.md
 ```
 
@@ -75,13 +81,20 @@ python -m src.training.trainer --som-dim 16 16 --epochs 40 --seed 42
 
 ## Explorer
 
-An interactive SOM explorer is available as a FastAPI + D3 web app:
+An interactive SOM explorer is available as a FastAPI + D3 web app (auto-loads the best checkpoint on startup, scopes datasets to `data/`, and supports fast compact `.npz` loading + lazy cell inspection):
 
 ```bash
+# optional one-time export from 3.6 GB pickle -> compact per-split .npz (~60 MB for test)
+python explorer/export_compact_data.py
+
+# run locally
 python explorer/server.py [--port 8050] [--host 0.0.0.0]
+
+# or via Docker Compose
+docker compose -f explorer/docker-compose.yml up --build -d
 ```
 
-Open `http://localhost:8050` in a browser to browse SOM nodes, inspect ECG beats, explore latent-space structure, and predict Age / Sex / SOM placement on new ECG files directly from the sidebar.
+Open `http://localhost:8050` in a browser to browse SOM nodes, inspect 12-lead ECG prototypes and percentile bands, and predict Age / Sex / SOM placement on new ECG files directly from the sidebar.
 
 ![ECG-SOM Explorer](explorer/explorer.png)
 
