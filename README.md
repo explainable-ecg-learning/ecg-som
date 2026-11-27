@@ -44,18 +44,17 @@ python explorer/server.py [--port 8050] [--host 0.0.0.0]
 docker compose -f explorer/docker-compose.yml up --build -d
 ```
 
-**Vercel static hosting & GitHub auto-deploy** (all Vercel files live inside `explorer/` via [`explorer/vercel.json`](explorer/vercel.json)):
+**Vercel static hosting & GitHub auto-deploy** (matches `ecg-heartbeat-cbm`: prebuilt zero-cold-start bundle in [`explorer/vercel/`](explorer/vercel/README.md)):
 
-- **GitHub → Vercel auto-deploy** (precomputed `explorer/dist/` is tracked in Git for full 4-view hosting out-of-the-box):
-  1. Connect your GitHub repository in Vercel and set **Root Directory** to `explorer`.
-  2. Keep default Build/Output settings (`explorer/vercel.json` runs `python3 build_static_site.py --if-missing`, preserving tracked `static-data/` snapshots while refreshing any `explorer/static/` UI edits).
-  3. Enable **Analytics** in your Vercel project dashboard to activate Vercel Web Analytics (`/_vercel/insights/script.js` in [`explorer/static/index.html`](explorer/static/index.html)).
+- **GitHub → Vercel auto-deploy** (`explorer/vercel/` is tracked in Git for full 4-view hosting out-of-the-box):
+  1. Connect your GitHub repository in Vercel, set **Root Directory** to `explorer/vercel`, leave **Framework Preset** as `Other`, and leave **Build Command** empty.
+  2. Enable **Analytics** in your Vercel project dashboard to activate Vercel Web Analytics (`/_vercel/insights/script.js` in [`explorer/vercel/index.html`](explorer/vercel/index.html)).
 - **Regenerate snapshots or deploy via CLI**:
   ```bash
-  # Rebuild full static snapshots (SOM grids, lazy cell waveforms, Cell Compare stats, UDA demos, 12 figures)
-  python explorer/build_static_site.py
+  # Rebuild full static snapshots into explorer/vercel/
+  python explorer/build_vercel.py
   # Optional manual CLI deploy without git push
-  cd explorer && npx vercel --prod
+  cd explorer/vercel && npx vercel --prod
   ```
 - **Remote GPU/CPU backend (optional)**: To enable live ECG file uploads and arbitrary UDA runs from the Vercel frontend, run `explorer/server.py` with `EXPLORER_CORS_ORIGINS=https://your-app.vercel.app` and open `https://your-app.vercel.app/?api=https://your-fastapi-host`.
 

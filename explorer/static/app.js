@@ -908,7 +908,7 @@ function _waveformRmse(p1, p2) {
 }
 
 async function _loadStaticSomBundle(bundleId, infoSuffix = '') {
-  const data = await _fetchJsonDirect(`/static-data/som/${bundleId}.json`);
+  const data = await _fetchJsonDirect(`./data/som/${bundleId}.json`);
   _staticState.activeBundleId = bundleId;
   _staticState.bundleData = data;
   _staticState.cellCache.clear();
@@ -1000,7 +1000,7 @@ async function staticApiFetch(url, opts = {}) {
 
   if (path === '/api/models') {
     if (!_staticState.modelsCatalog) {
-      _staticState.modelsCatalog = await _fetchJsonDirect('/static-data/models.json');
+      _staticState.modelsCatalog = await _fetchJsonDirect('./data/models.json');
     }
     return _staticState.modelsCatalog;
   }
@@ -1040,7 +1040,7 @@ async function staticApiFetch(url, opts = {}) {
     const c = Number(cellMatch[2]);
     const key = `${_staticState.activeBundleId}:${r},${c}`;
     if (!_staticState.cellCache.has(key)) {
-      const detail = await _fetchJsonDirect(`/static-data/cells/${_staticState.activeBundleId}/${r}_${c}.json`);
+      const detail = await _fetchJsonDirect(`./data/cells/${_staticState.activeBundleId}/${r}_${c}.json`);
       _staticState.cellCache.set(key, detail);
     }
     return _staticState.cellCache.get(key);
@@ -1051,12 +1051,12 @@ async function staticApiFetch(url, opts = {}) {
   }
 
   if (path === '/api/overview') {
-    return _fetchJsonDirect('/static-data/overview.json');
+    return _fetchJsonDirect('./data/overview.json');
   }
 
   if (path === '/api/uda/results') {
     if (!_staticState.udaCatalog) {
-      _staticState.udaCatalog = await _fetchJsonDirect('/static-data/uda_results.json');
+      _staticState.udaCatalog = await _fetchJsonDirect('./data/uda_results.json');
     }
     return _staticState.udaCatalog;
   }

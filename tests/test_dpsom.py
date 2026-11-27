@@ -635,39 +635,42 @@ def test_explorer_compare_cells_endpoint():
 def test_static_site_builder_for_vercel():
     import json
     import pickle
-    from explorer.build_static_site import build_static_site
+    from explorer.build_vercel import build_vercel_bundle
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    with open(os.path.join(repo_root, "explorer", "vercel.json"), encoding="utf-8") as fh:
-        vcfg = json.load(fh)
-    assert vcfg.get("outputDirectory") == "dist"
-    assert "build_static_site.py --if-missing" in vcfg.get("buildCommand", "")
 
     with tempfile.TemporaryDirectory() as tmp:
         # 1. Lightweight static build (zero ML inference, pure metadata + figures)
-        lite_dir = os.path.join(tmp, "lite_dist")
-        res_lite = build_static_site(lite_dir, repo_root=repo_root, lightweight=True)
+        lite_dir = os.path.join(tmp, "lite_vercel")
+        res_lite = build_vercel_bundle(lite_dir, repo_root=repo_root, lightweight=True)
         assert res_lite["lightweight"] is True
         idx_html_path = os.path.join(lite_dir, "index.html")
         assert os.path.isfile(idx_html_path)
         with open(idx_html_path, encoding="utf-8") as fh:
             idx_html = fh.read()
         assert "/_vercel/insights/script.js" in idx_html and "window.va" in idx_html
+        assert "./static/style.css" in idx_html and "./data/models.json" in idx_html
+        with open(os.path.join(lite_dir, "vercel.json"), encoding="utf-8") as fh:
+            vcfg = json.load(fh)
+        assert vcfg.get("cleanUrls") is True
+        assert "buildCommand" not in vcfg
+        assert any(h.get("source") == "/data/(.*)" for h in vcfg.get("headers", []))
+        assert os.path.isfile(os.path.join(lite_dir, "README.md"))
         with open(os.path.join(lite_dir, "static", "site-config.js"), encoding="utf-8") as fh:
             cfg_js = fh.read()
         assert "EXPLORER_STATIC_MODE = true" in cfg_js
 
-        with open(os.path.join(lite_dir, "static-data", "models.json"), encoding="utf-8") as fh:
+        with open(os.path.join(lite_dir, "data", "models.json"), encoding="utf-8") as fh:
             m_lite = json.load(fh)
         assert m_lite["static_mode"] is True and m_lite["models"] == []
 
-        with open(os.path.join(lite_dir, "static-data", "overview.json"), encoding="utf-8") as fh:
+        with open(os.path.join(lite_dir, "data", "overview.json"), encoding="utf-8") as fh:
             ov = json.load(fh)
         assert len(ov["figures"]) >= 1
-        assert ov["figures"][0]["url"].startswith("/static-data/figures/")
+        assert ov["figures"][0]["url"].startswith("./data/figures/")
 
         # 2. Full bundle build on synthetic checkpoint + dataset
-        full_dir = os.path.join(tmp, "full_dist")
+        full_dir = os.path.join(tmp, "full_vercel")
         ckpt_p = os.path.join(tmp, "tiny.ckpt")
         ds_p = os.path.join(tmp, "synth.pkl")
         m = DPSOM_ECG(
@@ -682,7 +685,7 @@ def test_static_site_builder_for_vercel():
         with open(ds_p, "wb") as fh:
             pickle.dump(ds, fh)
 
-        res_full = build_static_site(
+        res_full = build_vercel_bundle(
             full_dir,
             repo_root=repo_root,
             lightweight=False,
@@ -700,14 +703,14 @@ def test_static_site_builder_for_vercel():
             }],
         )
         assert res_full["n_bundles"] == 1
-        with open(os.path.join(full_dir, "static-data", "models.json"), encoding="utf-8") as fh:
+        with open(os.path.join(full_dir, "data", "models.json"), encoding="utf-8") as fh:
             m_full = json.load(fh)
         assert m_full["bundles"]["models/tiny.ckpt|synth.pkl|test"] == "tiny_synth"
-        with open(os.path.join(full_dir, "static-data", "som", "tiny_synth.json"), encoding="utf-8") as fh:
+        with open(os.path.join(full_dir, "data", "som", "tiny_synth.json"), encoding="utf-8") as fh:
             som = json.load(fh)
         assert som["som_dim"] == [4, 4]
         assert len(som["embeddings"]) == 4 and len(som["cell_stats"]) == 16
-        with open(os.path.join(full_dir, "static-data", "cells", "tiny_synth", "0_0.json"), encoding="utf-8") as fh:
+        with open(os.path.join(full_dir, "data", "cells", "tiny_synth", "0_0.json"), encoding="utf-8") as fh:
             c00 = json.load(fh)
         assert {"row", "col", "n_total", "proto_leads", "percentiles", "samples", "t_axis"}.issubset(c00.keys())
 
