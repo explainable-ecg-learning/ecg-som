@@ -7,9 +7,10 @@ services:
     ports:
       - "8050:8050"
     volumes:
-      # Mount data, models, and ablation results read-only at runtime.
+      # Mount data, models, docs, and ablation results read-only at runtime.
       - ../data:/app/data:ro
       - ../models:/app/models:ro
+      - ../docs:/app/docs:ro
       - ../ablation:/app/ablation:ro
       # Use a local Docker named volume for cache (avoids NFS root_squash PermissionError).
       - explorer_cache:/app/explorer/cache

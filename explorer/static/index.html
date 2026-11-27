@@ -8,120 +8,591 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <!-- Vercel Web Analytics (auto-served by Vercel edge when enabled in dashboard) -->
+  <script>
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  </script>
+  <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
 
 <header class="site-topbar">
   <div class="topbar-inner">
-    <span class="brand">
-      <span class="brand-thin">ECG-SOM</span> <span class="brand-bold">Explorer</span>
-    </span>
-    <span class="topbar-meta">Toroidal Self-Organizing Map · PTB-XL</span>
+    <div class="topbar-left">
+      <span class="brand">
+        <span class="brand-thin">ECG-SOM</span> <span class="brand-bold">Explorer</span>
+      </span>
+      <nav class="topbar-nav" aria-label="Explorer Views">
+        <button type="button" class="nav-tab active" data-tab="som">SOM Explorer</button>
+        <button type="button" class="nav-tab" data-tab="compare">Cell Compare <span id="compare-tab-badge" class="tab-badge" style="display:none">0</span></button>
+        <button type="button" class="nav-tab" data-tab="uda">UDA Explorer</button>
+        <button type="button" class="nav-tab" data-tab="overview">System Overview</button>
+      </nav>
+    </div>
+    <span class="topbar-meta">Toroidal Self-Organizing Map · PTB-XL · Georgia · Chapman</span>
   </div>
 </header>
 
-<div class="layout">
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 1: SOM Explorer                                                     -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div id="view-som" class="tab-view active">
+  <div class="layout">
 
-  <!-- ── Sidebar ── -->
-  <aside class="sidebar">
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
 
-    <div class="ctrl-group">
-      <label class="ctrl-label" for="ckpt-select">Checkpoint</label>
-      <select id="ckpt-select"></select>
-    </div>
-
-    <div class="ctrl-group">
-      <label class="ctrl-label" for="data-path">Dataset (data/)</label>
-      <select id="data-path"></select>
-    </div>
-
-    <div class="ctrl-group">
-      <label class="ctrl-label">Split</label>
-      <div class="radio-row">
-        <label><input type="radio" name="split" value="test" checked> test</label>
-        <label><input type="radio" name="split" value="val"> val</label>
-        <label><input type="radio" name="split" value="train"> train</label>
-        <label><input type="radio" name="split" value="all"> all</label>
+      <div class="ctrl-group">
+        <label class="ctrl-label" for="ckpt-select">Checkpoint</label>
+        <select id="ckpt-select"></select>
       </div>
-    </div>
 
-    <div class="ctrl-group">
-      <label class="ctrl-label" for="color-mode">Heatmap colour</label>
-      <select id="color-mode">
-        <option value="majority" selected>Majority class (ground truth)</option>
-        <option value="predicted">Predicted class (model)</option>
-        <option value="count">Sample count</option>
-      </select>
-    </div>
-
-    <button id="load-btn" class="btn-primary">Load &amp; Run</button>
-
-    <label class="ctrl-force">
-      <input type="checkbox" id="force-recompute">
-      Force recompute (ignore cache)
-    </label>
-
-    <div id="status" class="status-box"></div>
-
-    <!-- ── Predict New ECG ── -->
-    <div id="predict-panel" class="ctrl-group section-divider" style="display:none;">
-      <label class="ctrl-label" for="new-ecg-path">Predict New ECG</label>
-      <input type="text" id="new-ecg-path" placeholder="File in data/ (.hea, .npy, .npz, .csv)">
-      <div class="upload-row">
-        <input type="file" id="new-ecg-file" accept=".npy,.npz,.csv" class="file-input">
-        <input type="number" id="new-ecg-fs" value="100" min="50" max="1000" step="10"
-               title="Sampling rate (Hz)" class="fs-input">
-        <span class="unit-label">Hz</span>
+      <div class="ctrl-group">
+        <label class="ctrl-label" for="data-path">Dataset (data/)</label>
+        <select id="data-path"></select>
       </div>
-      <button id="predict-btn" class="btn-secondary">Predict &amp; Locate on SOM</button>
-      <div id="predict-result" class="predict-result" style="display:none;"></div>
-    </div>
 
-    <div id="class-legend" class="class-legend" style="display:none"></div>
-
-  </aside>
-
-  <!-- ── Main ── -->
-  <main class="main">
-
-    <!-- Heatmap -->
-    <section class="card" id="heatmap-section">
-      <div id="heatmap-container"></div>
-    </section>
-
-    <!-- Cell detail — hidden until click -->
-    <section class="card" id="cell-detail" style="display:none">
-
-      <h2 id="cell-title">Cell (?, ?)</h2>
-
-      <!-- Lead toggle bar -->
-      <div id="lead-toggle-bar" class="lead-toggle-bar"></div>
-
-      <div class="two-col">
-        <div class="panel">
-          <div class="panel-head">SOM Prototype</div>
-          <div id="proto-chart" class="chart-wrap"></div>
-        </div>
-        <div class="panel">
-          <div class="panel-head">Percentile Distribution</div>
-          <div id="pct-chart" class="chart-wrap"></div>
+      <div class="ctrl-group">
+        <label class="ctrl-label">Split</label>
+        <div class="radio-row">
+          <label><input type="radio" name="split" value="test" checked> test</label>
+          <label><input type="radio" name="split" value="val"> val</label>
+          <label><input type="radio" name="split" value="train"> train</label>
+          <label><input type="radio" name="split" value="all"> all</label>
         </div>
       </div>
 
-      <div class="samples-head">
-        <span class="panel-head" id="samples-title">Sample Beats</span>
+      <div class="ctrl-group">
+        <label class="ctrl-label" for="color-mode">Heatmap colour</label>
+        <select id="color-mode">
+          <option value="majority" selected>Majority class (ground truth)</option>
+          <option value="predicted">Predicted class (model)</option>
+          <option value="count">Sample count</option>
+        </select>
       </div>
-      <div id="sample-list" class="sample-grid"></div>
 
+      <button id="load-btn" class="btn-primary">Load &amp; Run</button>
+
+      <label class="ctrl-force">
+        <input type="checkbox" id="force-recompute">
+        Force recompute (ignore cache)
+      </label>
+
+      <div id="status" class="status-box"></div>
+
+      <!-- ── Predict New ECG ── -->
+      <div id="predict-panel" class="ctrl-group section-divider" style="display:none;">
+        <label class="ctrl-label" for="new-ecg-path">Predict New ECG</label>
+        <input type="text" id="new-ecg-path" placeholder="File in data/ (.hea, .npy, .npz, .csv)">
+        <div class="upload-row">
+          <input type="file" id="new-ecg-file" accept=".npy,.npz,.csv" class="file-input">
+          <input type="number" id="new-ecg-fs" value="100" min="50" max="1000" step="10"
+                 title="Sampling rate (Hz)" class="fs-input">
+          <span class="unit-label">Hz</span>
+        </div>
+        <button id="predict-btn" class="btn-secondary">Predict &amp; Locate on SOM</button>
+        <div id="predict-result" class="predict-result" style="display:none;"></div>
+      </div>
+
+      <div id="class-legend" class="class-legend" style="display:none"></div>
+
+    </aside>
+
+    <!-- ── Main ── -->
+    <main class="main">
+
+      <!-- Heatmap -->
+      <section class="card" id="heatmap-section">
+        <div id="heatmap-container"></div>
+      </section>
+
+      <!-- Cell detail — hidden until click -->
+      <section class="card" id="cell-detail" style="display:none">
+
+        <div class="cell-detail-head">
+          <h2 id="cell-title">Cell (?, ?)</h2>
+          <button id="add-to-compare-btn" type="button" class="btn-secondary btn-fit">+ Add to Compare</button>
+        </div>
+
+        <!-- Lead toggle bar -->
+        <div id="lead-toggle-bar" class="lead-toggle-bar"></div>
+
+        <div class="two-col">
+          <div class="panel">
+            <div class="panel-head">SOM Prototype</div>
+            <div id="proto-chart" class="chart-wrap"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">Percentile Distribution</div>
+            <div id="pct-chart" class="chart-wrap"></div>
+          </div>
+        </div>
+
+        <div class="samples-head">
+          <span class="panel-head" id="samples-title">Sample Beats</span>
+        </div>
+        <div id="sample-list" class="sample-grid"></div>
+
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 1B: Cell Compare                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div id="view-compare" class="tab-view">
+  <div class="view-container">
+
+    <section class="section-head">
+      <div>
+        <h1>SOM Cell Comparator</h1>
+        <p class="section-sub">
+          Compare up to 6 SOM matrix cells side by side across decoded 12-lead prototypes, empirical IQR bands, waveform differences, diagnostic class composition, demographics, and toroidal/latent distances.
+        </p>
+      </div>
     </section>
 
-  </main>
+    <div id="cmp-empty-state" class="card cmp-empty-state" style="display:none;">
+      <p>Load a model &amp; dataset in <strong>SOM Explorer</strong> first to compare cells from its matrix.</p>
+      <button type="button" id="cmp-go-som-btn" class="btn-primary btn-fit">Go to SOM Explorer</button>
+    </div>
+
+    <div id="cmp-workspace">
+      <!-- Toolbar & Selected Chips -->
+      <section class="card cmp-toolbar-card">
+        <div class="cmp-toolbar">
+          <div class="cmp-presets">
+            <span class="ctrl-label">Presets:</span>
+            <button type="button" class="lead-btn" id="cmp-preset-distinct">Distinct Classes</button>
+            <button type="button" class="lead-btn" id="cmp-preset-top">Top 4 Populated</button>
+            <button type="button" class="lead-btn" id="cmp-preset-nbrs">Toroidal Neighbors</button>
+            <button type="button" class="lead-btn lead-btn-action" id="cmp-clear-btn">Clear</button>
+          </div>
+          <div id="cmp-selected-chips" class="cmp-chips"></div>
+        </div>
+      </section>
+
+      <!-- Top Row: Interactive Grid Picker + Summary / Pairwise Matrix -->
+      <div class="cmp-top-grid">
+        <section class="card">
+          <div class="card-head-row">
+            <div>
+              <h2>Matrix Cell Picker</h2>
+              <p class="card-sub">Click up to 6 cells to toggle them in the comparison.</p>
+            </div>
+          </div>
+          <div id="cmp-grid-wrap" class="chart-wrap"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head-row">
+            <div>
+              <h2>Selected Cells &amp; Pairwise Distances</h2>
+              <p class="card-sub">Latent codebook embeddings, toroidal hops, waveforms, and class divergence.</p>
+            </div>
+            <div class="inline-ctrl">
+              <label class="ctrl-label" for="cmp-dist-metric">Matrix</label>
+              <select id="cmp-dist-metric">
+                <option value="latent_l2" selected>Latent L2 ↓</option>
+                <option value="latent_cos">Latent Cos Sim ↑</option>
+                <option value="waveform_rmse">Waveform RMSE ↓</option>
+                <option value="js_divergence">Class JS Div [0–1]</option>
+                <option value="toroidal_l1">Toroidal Hops (L1)</option>
+              </select>
+            </div>
+          </div>
+          <div id="cmp-summary-table" class="cmp-table-wrap"></div>
+          <div id="cmp-pairwise-wrap" class="chart-wrap" style="margin-top:14px;"></div>
+        </section>
+      </div>
+
+      <!-- Waveform Overlay Comparison -->
+      <section class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Multi-Lead ECG Waveform Comparison</h2>
+            <p class="card-sub" id="cmp-wave-sub">Shared per-lead voltage axis across all selected cells.</p>
+          </div>
+          <div class="inline-controls-pair">
+            <select id="cmp-wave-mode" aria-label="Waveform display mode">
+              <option value="proto" selected>Overlay SOM Prototypes</option>
+              <option value="median">Overlay Cell Medians + IQR</option>
+              <option value="diff">Difference Wave (Cell 1 − Cell 2)</option>
+            </select>
+          </div>
+        </div>
+        <div id="cmp-lead-bar" class="lead-toggle-bar"></div>
+        <div id="cmp-wave-legend" class="cmp-wave-legend"></div>
+        <div id="cmp-wave-chart" class="chart-wrap"></div>
+      </section>
+
+      <!-- Bottom Row: Class Composition + Demographic Disentanglement Check -->
+      <div class="two-col-wide">
+        <section class="card">
+          <div class="card-head-row">
+            <div>
+              <h2>Diagnostic Class Composition</h2>
+              <p class="card-sub">Normalized clinical label shares &amp; cluster purity per selected cell.</p>
+            </div>
+          </div>
+          <div id="cmp-class-chart" class="chart-wrap"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head-row">
+            <div>
+              <h2>Demographic Distribution (Age &amp; Sex)</h2>
+              <p class="card-sub">Checks demographic invariance across clinical clusters via probe residualization.</p>
+            </div>
+          </div>
+          <div id="cmp-demo-chart" class="chart-wrap"></div>
+        </section>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 2: UDA Explorer                                                     -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div id="view-uda" class="tab-view">
+  <div class="view-container">
+
+    <section class="section-head">
+      <div>
+        <h1>Unsupervised Domain Adaptation Explorer</h1>
+        <p class="section-sub">
+          Inspect the 3-seed cross-dataset &amp; UDA benchmark across PTB-XL, Georgia, and Chapman-Shaoxing (168 runs), or run live zero-label BW-OT / Hybrid Damped-DEC adaptation directly on any checkpoint.
+        </p>
+      </div>
+    </section>
+
+    <!-- Overall KPI strip -->
+    <div id="uda-kpi-grid" class="kpi-grid"></div>
+
+    <!-- 8-pair x 7-regime UDA Benchmark Heatmap -->
+    <section class="card">
+      <div class="card-head-row">
+        <div>
+          <h2>UDA Regime Comparison Matrix (8 Off-Diagonal Pairs × 3 Seeds)</h2>
+          <p class="card-sub">Click any transfer row to inspect individual seed distributions &amp; demographic metrics below.</p>
+        </div>
+        <div class="inline-ctrl">
+          <label class="ctrl-label" for="uda-metric-select">Metric</label>
+          <select id="uda-metric-select">
+            <option value="delta_Rec_AMI" selected>Δ Rec AMI vs. Zero-Shot ↑</option>
+            <option value="Rec_AMI">Record AMI ↑</option>
+            <option value="NMI">Beat NMI ↑</option>
+            <option value="Rec_Purity">Record Purity ↑</option>
+            <option value="AUC_Sex">Sex AUROC ↑</option>
+            <option value="MAE_Age">Age MAE (yr) ↓</option>
+            <option value="TE">Topographic Error ↓</option>
+            <option value="QE">Quantization Error ↓</option>
+            <option value="Active_Nodes">Active SOM Nodes / 64</option>
+          </select>
+        </div>
+      </div>
+      <div id="uda-heatmap-wrap" class="chart-wrap"></div>
+    </section>
+
+    <!-- Two-column deep dive + cross-dataset transfer matrix -->
+    <div class="two-col-wide">
+      <section class="card">
+        <div class="card-head-row">
+          <div>
+            <h2 id="uda-pair-title">Pair Deep-Dive: PTB-XL Full → Georgia</h2>
+            <p class="card-sub" id="uda-pair-sub">3-seed mean ± std with individual seed markers</p>
+          </div>
+        </div>
+        <div id="uda-pair-bar-wrap" class="chart-wrap"></div>
+        <div id="uda-pair-demo-wrap" class="pair-demo-strip"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Zero-Shot Transfer Matrix (4 Sources × 3 Targets)</h2>
+            <p class="card-sub">Dark borders mark in-domain target diagonals.</p>
+          </div>
+          <div class="inline-ctrl">
+            <label class="ctrl-label" for="xds-metric-select">Metric</label>
+            <select id="xds-metric-select">
+              <option value="Rec_AMI" selected>Record AMI ↑</option>
+              <option value="MAE_Age">Age MAE (yr) ↓</option>
+              <option value="AUC_Sex">Sex AUROC ↑</option>
+              <option value="TE">Topographic Error ↓</option>
+            </select>
+          </div>
+        </div>
+        <div id="xds-matrix-wrap" class="chart-wrap"></div>
+      </section>
+    </div>
+
+    <!-- Live UDA Playground -->
+    <section class="card">
+      <div class="card-head-row">
+        <div>
+          <h2>Live UDA Playground</h2>
+          <p class="card-sub">
+            Run zero-label domain adaptation on a target <code>.pkl</code> cohort, inspect before/after metrics &amp; SOM shifts, and push the adapted map into the SOM Explorer.
+          </p>
+        </div>
+      </div>
+
+      <div class="uda-controls-grid">
+        <div class="ctrl-group">
+          <label class="ctrl-label" for="uda-ckpt">Source Checkpoint</label>
+          <select id="uda-ckpt"></select>
+        </div>
+        <div class="ctrl-group">
+          <label class="ctrl-label" for="uda-src-data">Source Cohort (.pkl)</label>
+          <select id="uda-src-data"></select>
+        </div>
+        <div class="ctrl-group">
+          <label class="ctrl-label" for="uda-tgt-data">Target Cohort (.pkl)</label>
+          <select id="uda-tgt-data"></select>
+        </div>
+        <div class="ctrl-group">
+          <label class="ctrl-label" for="uda-method">Adaptation Method</label>
+          <select id="uda-method">
+            <option value="uda_bw_ot" selected>BW-OT (~0.1s, 0 backprop)</option>
+            <option value="uda_sf_strong">SF Hybrid DEC + SWA (no source data)</option>
+            <option value="uda_ot_strong">BW-OT + Hybrid DEC + SWA</option>
+            <option value="uda_vanilla">Vanilla UDA (beat DEC + SOM)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="uda-params-row">
+        <div class="param-item" data-param="ot-morph">
+          <label class="ctrl-label" for="uda-s-morph">s_morph <span id="val-s-morph" class="mono-val">0.35</span></label>
+          <input type="range" id="uda-s-morph" min="0" max="1" step="0.05" value="0.35">
+        </div>
+        <div class="param-item" data-param="ot-demo">
+          <label class="ctrl-label" for="uda-s-age">s_age <span id="val-s-age" class="mono-val">0.25</span></label>
+          <input type="range" id="uda-s-age" min="0" max="1" step="0.05" value="0.25">
+        </div>
+        <div class="param-item" data-param="ot-demo">
+          <label class="ctrl-label" for="uda-s-sex">s_sex <span id="val-s-sex" class="mono-val">0.75</span></label>
+          <input type="range" id="uda-s-sex" min="0" max="1" step="0.05" value="0.75">
+        </div>
+        <div class="param-item" data-param="dec">
+          <label class="ctrl-label" for="uda-epochs">Epochs <span id="val-epochs" class="mono-val">4</span></label>
+          <input type="range" id="uda-epochs" min="1" max="10" step="1" value="4">
+        </div>
+        <div class="param-item" data-param="hyb">
+          <label class="ctrl-label" for="uda-alpha-rec">α_rec <span id="val-alpha-rec" class="mono-val">0.35</span></label>
+          <input type="range" id="uda-alpha-rec" min="0" max="1" step="0.05" value="0.35">
+        </div>
+        <div class="param-item" data-param="hyb">
+          <label class="ctrl-label" for="uda-rho">ρ (freq damp) <span id="val-rho" class="mono-val">0.75</span></label>
+          <input type="range" id="uda-rho" min="0" max="1" step="0.05" value="0.75">
+        </div>
+      </div>
+
+      <div class="uda-action-row">
+        <button id="uda-run-btn" class="btn-primary btn-fit">Run Live UDA</button>
+        <button id="uda-apply-btn" class="btn-secondary btn-fit" disabled>Inspect Adapted Map in SOM Explorer →</button>
+        <span id="uda-run-status" class="status-inline"></span>
+      </div>
+
+      <div id="uda-live-results" style="display:none;">
+        <div id="uda-delta-grid" class="delta-grid"></div>
+        <div class="mini-som-pair">
+          <div class="panel">
+            <div class="panel-head">Before Adaptation (Frozen Source)</div>
+            <div id="uda-mini-before" class="chart-wrap"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">After Adaptation (<span id="uda-after-label">Adapted</span>)</div>
+            <div id="uda-mini-after" class="chart-wrap"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 3: System Overview                                                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div id="view-overview" class="tab-view">
+  <div class="view-container">
+
+    <section class="section-head">
+      <div>
+        <h1>DPSOM-ECG System Overview</h1>
+        <p class="section-sub">
+          Disentangled Probabilistic Self-Organizing Map for interpretable 12-lead beat-sequence clustering, demographic prediction, and zero-label cross-cohort domain adaptation.
+        </p>
+      </div>
+    </section>
+
+    <div id="ov-kpi-grid" class="kpi-grid"></div>
+
+    <!-- Interactive Architecture Diagram -->
+    <section class="card">
+      <div class="card-head-row">
+        <div>
+          <h2>Interactive Architecture &amp; Data Flow</h2>
+          <p class="card-sub">Click any block to inspect dimensions, objective functions, source files, and empirical ablation takeaways.</p>
+        </div>
+      </div>
+
+      <div class="arch-layout">
+        <div class="arch-svg-wrap">
+          <svg id="ov-arch-svg" viewBox="0 0 860 360" class="arch-svg" role="img" aria-label="DPSOM-ECG Architecture Diagram">
+            <defs>
+              <marker id="arrow-ink" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#767676"></path>
+              </marker>
+              <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#b83b2a"></path>
+              </marker>
+            </defs>
+
+            <!-- Connectors -->
+            <line x1="158" y1="125" x2="205" y2="125" stroke="#767676" stroke-width="1.6" marker-end="url(#arrow-ink)"/>
+            <line x1="365" y1="95" x2="412" y2="95" stroke="#b83b2a" stroke-width="1.8" marker-end="url(#arrow-accent)"/>
+            <line x1="572" y1="95" x2="620" y2="95" stroke="#b83b2a" stroke-width="1.8" marker-end="url(#arrow-accent)"/>
+            <path d="M 365 170 L 412 225" fill="none" stroke="#767676" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#arrow-ink)"/>
+            <line x1="572" y1="235" x2="620" y2="235" stroke="#b83b2a" stroke-width="1.6" stroke-dasharray="4,3" marker-end="url(#arrow-accent)"/>
+            <line x1="720" y1="165" x2="720" y2="195" stroke="#767676" stroke-width="1.4" marker-end="url(#arrow-ink)"/>
+
+            <!-- Node 1: Input -->
+            <g class="arch-node active" data-node="input" transform="translate(18,65)">
+              <rect width="140" height="120" rx="5"></rect>
+              <text x="12" y="24" class="arch-badge">1 · INPUT</text>
+              <text x="12" y="46" class="arch-title">12-Lead Beat</text>
+              <text x="12" y="64" class="arch-title">Preprocessing</text>
+              <text x="12" y="88" class="arch-meta">[B, N, 12, 120] @ 100Hz</text>
+              <text x="12" y="104" class="arch-meta">+ beat_meta [24]</text>
+            </g>
+
+            <!-- Node 2: 3 Encoders -->
+            <g class="arch-node" data-node="encoders" transform="translate(210,40)">
+              <rect width="155" height="170" rx="5"></rect>
+              <text x="12" y="24" class="arch-badge">2 · ENCODERS</text>
+              <text x="12" y="46" class="arch-title">3 Conv1D Streams</text>
+              <text x="12" y="72" class="arch-sub">• Morph VAE → μ, logσ² (32D)</text>
+              <text x="12" y="94" class="arch-sub">• Age Conv1D → z_age (8D)</text>
+              <text x="12" y="114" class="arch-sub">• Sex Conv1D → z_sex (8D)</text>
+              <text x="12" y="142" class="arch-meta">Lead-wise Conv + GN + SE</text>
+              <text x="12" y="158" class="arch-meta">Decoupled gradients</text>
+            </g>
+
+            <!-- Node 3: Residualization -->
+            <g class="arch-node" data-node="residualization" transform="translate(417,40)">
+              <rect width="155" height="110" rx="5"></rect>
+              <text x="12" y="24" class="arch-badge">3 · DISENTANGLE</text>
+              <text x="12" y="46" class="arch-title">Probe Residualization</text>
+              <text x="12" y="70" class="arch-meta">z_res ⟂ u_age, u_sex</text>
+              <text x="12" y="88" class="arch-meta">Gram-Schmidt 2D proj</text>
+            </g>
+
+            <!-- Node 4: SOM & Decoder -->
+            <g class="arch-node" data-node="som" transform="translate(625,35)">
+              <rect width="215" height="128" rx="5"></rect>
+              <text x="12" y="24" class="arch-badge">4 · SOM &amp; DECODER</text>
+              <text x="12" y="46" class="arch-title">8×8 Toroidal SOM + FiLM</text>
+              <text x="12" y="70" class="arch-sub">• Student-t q_ik &amp; DEC KL(p‖q)</text>
+              <text x="12" y="88" class="arch-sub">• Toroidal nbrs (β) + seq (τ)</text>
+              <text x="12" y="110" class="arch-meta">64 Interpretable ECG Prototypes</text>
+            </g>
+
+            <!-- Node 5: 3-Phase Training -->
+            <g class="arch-node" data-node="training" transform="translate(417,198)">
+              <rect width="155" height="108" rx="5"></rect>
+              <text x="12" y="24" class="arch-badge">5 · OPTIMIZATION</text>
+              <text x="12" y="46" class="arch-title">3-Phase Training</text>
+              <text x="12" y="68" class="arch-meta">Pretrain → Probes → Joint</text>
+              <text x="12" y="86" class="arch-meta">Pruned defaults (η=0, bf16)</text>
+            </g>
+
+            <!-- Node 6: UDA -->
+            <g class="arch-node" data-node="uda" transform="translate(625,198)">
+              <rect width="215" height="108" rx="5"></rect>
+              <text x="12" y="24" class="arch-badge">6 · DOMAIN ADAPT</text>
+              <text x="12" y="46" class="arch-title">BW-OT + Hybrid DEC</text>
+              <text x="12" y="68" class="arch-sub">• Closed-form BW-OT (0.1s)</text>
+              <text x="12" y="88" class="arch-sub">• Hybrid Damped-DEC + SWA</text>
+            </g>
+          </svg>
+        </div>
+
+        <aside id="ov-arch-detail" class="arch-detail"></aside>
+      </div>
+    </section>
+
+    <!-- Cohorts & Matched-k Benchmark Chart -->
+    <div class="two-col-wide">
+      <section class="card">
+        <h2>Three Standardized 12-Lead Cohorts</h2>
+        <p class="card-sub">All harmonized to 100 Hz, 1.2 s R-peak beats across 3 continents.</p>
+        <div id="ov-cohorts" class="cohort-grid"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head-row">
+          <div>
+            <h2>Matched-k (k=64) Cohort Benchmarks</h2>
+            <p class="card-sub">3-seed mean across PTB-XL, Georgia &amp; Chapman-Shaoxing.</p>
+          </div>
+          <div class="inline-controls-pair">
+            <select id="ov-bench-cohort" aria-label="Benchmark cohort">
+              <option value="ptbxl" selected>PTB-XL (in-domain)</option>
+              <option value="georgia">Georgia (transfer/ext)</option>
+              <option value="chapman">Chapman-Shaoxing</option>
+            </select>
+            <select id="ov-bench-metric" aria-label="Benchmark metric">
+              <option value="Rec_AMI" selected>Record AMI ↑</option>
+              <option value="AUC_Sex">Sex AUROC ↑</option>
+              <option value="MAE_Age">Age MAE (yr) ↓</option>
+            </select>
+          </div>
+        </div>
+        <div id="ov-bench-chart" class="chart-wrap"></div>
+      </section>
+    </div>
+
+    <!-- Figures Gallery -->
+    <section class="card">
+      <div class="card-head-row">
+        <div>
+          <h2>Generated Reference Figures</h2>
+          <p class="card-sub">Click any figure to inspect full resolution.</p>
+        </div>
+      </div>
+      <div id="ov-fig-grid" class="fig-grid"></div>
+    </section>
+
+  </div>
+</div>
+
+<!-- Lightbox for gallery figures -->
+<div id="fig-lightbox" class="lightbox" style="display:none;" role="dialog" aria-modal="true">
+  <div class="lightbox-inner">
+    <div class="lightbox-head">
+      <strong id="lightbox-title"></strong>
+      <button id="lightbox-close" type="button" class="lead-btn">Close ×</button>
+    </div>
+    <img id="lightbox-img" src="" alt="">
+    <p id="lightbox-caption" class="card-sub"></p>
+  </div>
 </div>
 
 <!-- Tooltip -->
 <div id="tooltip"></div>
 
-<script src="/static/app.js"></script>
+<script src="/static/site-config.js?v=3"></script>
+<script src="/static/app.js?v=3"></script>
+<script src="/static/compare.js?v=3"></script>
+<script src="/static/uda.js?v=3"></script>
+<script src="/static/overview.js?v=3"></script>
 </body>
 </html>

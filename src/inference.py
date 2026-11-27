@@ -10,7 +10,7 @@ Predict on a single ECG file (WFDB, .npy, .npz, or .csv):
     python -m src.inference --ckpt models/.../model_best.ckpt --input path/to/00001_hr
 
 Convert a directory of ECG files into an Explorer-compatible ECG_Dataset pickle:
-    python -m src.inference --convert-dir path/to/ecgs/ --output data/custom_ecgs.pkl --fs 500
+    python -m src.inference --convert-dir path/to/ecgs/ --output data/processed/custom_ecgs.pkl --fs 500
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from src.data.dataset import ECG_Dataset
 from src.data.generator import ECG_DataGenerator
 from src.data.record import ECG_Record
 from src.model.dpsom import DPSOM_ECG
-from src.training.trainer import _load_checkpoint_state
+from src.training.trainer import load_dpsom_checkpoint
 
 TARGET_FS = 100
 TARGET_BEAT_LEN = 120
@@ -240,37 +240,7 @@ def load_model(
     """Load a trained DPSOM_ECG checkpoint (defaults to the best model when ckpt_path is None)."""
     ckpt_path = ckpt_path or find_best_checkpoint()
     dev = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    state, meta = _load_checkpoint_state(ckpt_path, dev)
-    meta = dict(meta)
-    meta["ckpt_path"] = ckpt_path
-
-    latent_dim      = int(meta.get("latent_dim", 32))
-    sd              = meta.get("som_dim", (8, 8))
-    som_dim         = (int(sd[0]), int(sd[1]))
-    input_length    = int(meta.get("input_length", TARGET_BEAT_LEN))
-    input_channels  = int(meta.get("input_channels", 12))
-    amp_context_dim = int(meta.get("amp_context_dim", 2 * input_channels))
-
-    model = DPSOM_ECG(
-        latent_dim=latent_dim,
-        som_dim=som_dim,
-        input_length=input_length,
-        input_channels=input_channels,
-        encoder_base_channels_1=int(meta.get("encoder_base_channels_1", 32)),
-        encoder_base_channels_2=int(meta.get("encoder_base_channels_2", 64)),
-        encoder_kernel_size=int(meta.get("encoder_kernel_size", 7)),
-        encoder_fc_hidden_dim=int(meta.get("encoder_fc_hidden_dim", 512)),
-        z_age_dim_factor=float(meta.get("z_age_dim_factor", 0.25)),
-        z_sex_dim_factor=float(meta.get("z_sex_dim_factor", 0.25)),
-        amp_context_dim=amp_context_dim,
-    ).to(dev)
-
-    if "_train_epoch" not in state:
-        state["_train_epoch"] = torch.tensor(model.age_corr_ramp_epochs, dtype=torch.long)
-
-    model.load_state_dict(state, strict=False)
-    model.eval()
-    return model, meta
+    return load_dpsom_checkpoint(ckpt_path, dev)
 
 
 @torch.no_grad()
@@ -368,7 +338,7 @@ def main() -> None:
     p.add_argument("--input", type=str, help="Single ECG file (WFDB .hea/.dat, .npy, .npz, or .csv)")
     p.add_argument("--fs", type=float, default=None, help="Sampling rate in Hz (auto for WFDB, default 100)")
     p.add_argument("--convert-dir", type=str, help="Convert all ECGs in a directory into an ECG_Dataset pickle")
-    p.add_argument("--output", type=str, default="data/custom_ecgs.pkl", help="Output .pkl path for --convert-dir")
+    p.add_argument("--output", type=str, default="data/processed/custom_ecgs.pkl", help="Output .pkl path for --convert-dir")
     args = p.parse_args()
 
     if args.convert_dir:

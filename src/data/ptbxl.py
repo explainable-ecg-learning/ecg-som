@@ -38,10 +38,10 @@ def print_dataset_stats(ds, split="all"):
 
 if __name__ == "__main__":
     fs = 100
-    dataset_path = f"./data/ptbxl_{fs}_T-12ms.pkl"
+    dataset_path = f"./data/processed/ptbxl_{fs}_T-12ms.pkl"
 
     ds = ECG_Dataset(fs)
-    ds.import_ptbxl(base_path="./data/PTB-XL")
+    ds.import_ptbxl(base_path="./data/raw/ptbxl")
     ds.save(dataset_path)
 
     ds = ECG_Dataset.load(dataset_path)

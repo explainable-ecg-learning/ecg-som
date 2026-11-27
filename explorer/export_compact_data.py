@@ -4,7 +4,7 @@ Replaces unpickling the 3.6 GB ptbxl_100_T-12ms.pkl with lightweight float16
 per-split archives (~60 MB for test, ~50 MB for val, ~400 MB for train).
 
 Usage:
-    python explorer/export_compact_data.py [--input data/ptbxl_100_T-12ms.pkl] [--out-dir data]
+    python explorer/export_compact_data.py [--input data/processed/ptbxl_100_T-12ms.pkl] [--out-dir data/explorer]
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def export_splits(pkl_path: str, out_dir: str) -> None:
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Export compact per-split .npz files for ECG-SOM Explorer")
-    p.add_argument("--input", default=os.path.join(_REPO_ROOT, "data", "ptbxl_100_T-12ms.pkl"))
-    p.add_argument("--out-dir", default=os.path.join(_REPO_ROOT, "data"))
+    p.add_argument("--input", default=os.path.join(_REPO_ROOT, "data", "processed", "ptbxl_100_T-12ms.pkl"))
+    p.add_argument("--out-dir", default=os.path.join(_REPO_ROOT, "data", "explorer"))
     args = p.parse_args()
     export_splits(args.input, args.out_dir)

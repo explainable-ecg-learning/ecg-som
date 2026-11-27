@@ -222,19 +222,49 @@ class DPSOM_ECG(nn.Module):
     def _reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         return mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
 
+    def _set_frozen_probe(self, probe: nn.Linear, buf: torch.Tensor, ready_buf: torch.Tensor,
+                          coef: torch.Tensor, bias: float = 0.0):
+        with torch.no_grad():
+            w = coef.detach().view(1, -1).to(device=probe.weight.device, dtype=probe.weight.dtype)
+            probe.weight.copy_(w)
+            if probe.bias is not None:
+                probe.bias.fill_(float(bias))
+            w_flat = w.view(-1).float()
+            buf.copy_((w_flat / w_flat.norm(p=2).clamp_min(1e-8)).to(device=buf.device, dtype=buf.dtype))
+            ready_buf.fill_(True)
+        for p in probe.parameters():
+            p.requires_grad = False
+        probe.eval()
+
+    def set_age_direction(self, coef: torch.Tensor, bias: float = 0.0):
+        """Store a fitted linear age probe (coef, bias), normalize _age_dir, and freeze."""
+        self._set_frozen_probe(self.age_probe, self._age_dir, self._probe_ready, coef, bias)
+
+    def set_sex_direction(self, coef: torch.Tensor, bias: float = 0.0):
+        """Store a fitted linear sex probe (coef, bias), normalize _sex_dir, and freeze."""
+        self._set_frozen_probe(self.sex_probe, self._sex_dir, self._sex_probe_ready, coef, bias)
+
     def set_age_direction_from_probe(self):
         w = self.age_probe.weight.detach().view(-1)
-        self._age_dir.copy_((w / w.norm(p=2)).to(device=self._age_dir.device, dtype=self._age_dir.dtype))
+        self._age_dir.copy_((w / w.norm(p=2).clamp_min(1e-8)).to(device=self._age_dir.device, dtype=self._age_dir.dtype))
         self._probe_ready.fill_(True)
 
     def residualize_latent(self, z: torch.Tensor) -> torch.Tensor:
-        v_age = self._age_dir.to(device=z.device, dtype=z.dtype).detach()
-        z = z - (z * v_age).sum(dim=1, keepdim=True) * v_age * self._probe_ready.float()
+        """Project z onto the orthogonal complement of active demographic directions in FP32."""
+        z32 = z.float()
+        r_age = self._probe_ready.to(device=z.device, dtype=torch.float32)
+        r_sex = self._sex_probe_ready.to(device=z.device, dtype=torch.float32)
 
-        v_sex = self._sex_dir.to(device=z.device, dtype=z.dtype).detach()
-        z = z - (z * v_sex).sum(dim=1, keepdim=True) * v_sex * self._sex_probe_ready.float()
+        v1 = self._age_dir.to(device=z.device, dtype=torch.float32).detach()
+        u1 = (v1 / v1.norm(p=2).clamp_min(1e-8)) * r_age
+        z32 = z32 - (z32 * u1).sum(dim=1, keepdim=True) * u1
 
-        return z
+        # Gram-Schmidt v_sex against u1 so both projections remain mutually orthogonal
+        v2 = self._sex_dir.to(device=z.device, dtype=torch.float32).detach()
+        v2 = v2 - (v2 * u1).sum() * u1
+        u2 = (v2 / v2.norm(p=2).clamp_min(1e-8)) * r_sex
+        z32 = z32 - (z32 * u2).sum(dim=1, keepdim=True) * u2
+        return z32.to(z.dtype)
 
     def freeze_age_probe(self):
         for p in self.age_probe.parameters():
@@ -244,7 +274,7 @@ class DPSOM_ECG(nn.Module):
 
     def set_sex_direction_from_probe(self):
         w = self.sex_probe.weight.detach().view(-1)
-        self._sex_dir.copy_((w / w.norm(p=2)).to(device=self._sex_dir.device, dtype=self._sex_dir.dtype))
+        self._sex_dir.copy_((w / w.norm(p=2).clamp_min(1e-8)).to(device=self._sex_dir.device, dtype=self._sex_dir.dtype))
         self._sex_probe_ready.fill_(True)
 
     def freeze_sex_probe(self):
@@ -290,6 +320,8 @@ class DPSOM_ECG(nn.Module):
         )
 
     def _age_corr_lambda(self) -> float:
+        if self.age_corr_lambda_max <= 0.0:
+            return 0.0
         t = min(1.0, float(self._train_epoch.item()) / float(self.age_corr_ramp_epochs))
         return float(self.age_corr_lambda_max) * t
 
@@ -301,6 +333,10 @@ class DPSOM_ECG(nn.Module):
     ) -> torch.Tensor:
         amp_proj = self.amp_proj_age(amp_context)
         age_logits_base = self.age_head(torch.cat([z_age, amp_proj], dim=1))
+
+        lam = self._age_corr_lambda()
+        if lam <= 0.0:
+            return age_logits_base
 
         q = self.q(z_morph.detach())
         q_top, idx_top = torch.topk(q, k=self.age_corr_topk, dim=1)
@@ -316,7 +352,7 @@ class DPSOM_ECG(nn.Module):
         corr_logits = (q_top.unsqueeze(-1) * node_corr).sum(dim=1)
         corr_logits = corr_logits + self.age_corr_amp_shortcut(amp_proj)
 
-        return age_logits_base + self._age_corr_lambda() * corr_logits
+        return age_logits_base + lam * corr_logits
 
     def _kl_divergence_diag(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         prior_var = self._prior_scale.to(mu.device)
@@ -417,8 +453,8 @@ class DPSOM_ECG(nn.Module):
         return q / q.sum(dim=1, keepdim=True)
 
     def q_p(self, x: torch.Tensor) -> torch.Tensor:
-        mu, logvar, _, _ = self._encode(x)
-        return self.q(self._reparameterize(mu, logvar))
+        mu, _, _, _ = self._encode(x)
+        return self.q(mu)
 
     @property
     def p(self):
@@ -527,6 +563,11 @@ class DPSOM_ECG(nn.Module):
         loss_commit_s = self.loss_commit_s(z_ng)
         return loss_som_s + loss_commit_s, loss_som_s, loss_commit_s
 
+    @staticmethod
+    def _masked_mean_weights(beat_valid: torch.Tensor) -> torch.Tensor:
+        w = (beat_valid > 0.5).to(beat_valid.dtype)
+        return w / w.sum(dim=1, keepdim=True).clamp_min(1.0)
+
     def loss_batch(self, beats, beat_mask, beat_meta, beat_valid, record_age, record_sex, p_batch):
         B, N, C, T = beats.shape
         BN = B * N
@@ -559,26 +600,32 @@ class DPSOM_ECG(nn.Module):
             age_target[valid], sex_target[valid],
         )
 
-        age_logits_all = self.age_logits_with_disease_correction(
-            z_age=zage_flat, amp_context=beat_meta_flat, z_morph=mu_flat
-        )
-        age_probs_beat = torch.softmax(age_logits_all.view(B, N, self.num_age_bins), dim=-1)
-        age_pred_beat = (age_probs_beat * self.age_bin_values).sum(dim=-1)
+        if self.eta > 0.0:
+            age_logits_all = self.age_logits_with_disease_correction(
+                z_age=zage_flat, amp_context=beat_meta_flat, z_morph=mu_flat
+            )
+            age_probs_beat = torch.softmax(age_logits_all.view(B, N, self.num_age_bins), dim=-1)
+            age_pred_beat = (age_probs_beat * self.age_bin_values).sum(dim=-1)
 
-        amp_proj_sex_flat = self.amp_proj_sex(beat_meta_flat)
-        sex_logits_beat = self.sex_head(
-            torch.cat([zsex_flat, amp_proj_sex_flat], dim=-1)
-        ).view(B, N)
+            amp_proj_sex_flat = self.amp_proj_sex(beat_meta_flat)
+            sex_logits_beat = self.sex_head(
+                torch.cat([zsex_flat, amp_proj_sex_flat], dim=-1)
+            ).view(B, N)
 
-        attn_age = self.record_attention_age(mu.detach(), beat_valid, beat_meta)
-        attn_sex = self.record_attention_sex(mu.detach(), beat_valid, beat_meta)
+            attn_age = self.record_attention_age(mu.detach(), beat_valid, beat_meta)
+            attn_sex = self.record_attention_sex(mu.detach(), beat_valid, beat_meta)
 
-        age_pred_record = (age_pred_beat.detach() * attn_age).sum(dim=1)
-        sex_logits_record = (sex_logits_beat.detach() * attn_sex).sum(dim=1)
+            age_pred_record = (age_pred_beat.detach() * attn_age).sum(dim=1)
+            sex_logits_record = (sex_logits_beat.detach() * attn_sex).sum(dim=1)
 
-        record_age_loss = 0.4 * self.delta_age * F.l1_loss(age_pred_record, record_age.float())
-        record_sex_loss = self.delta_sex * F.binary_cross_entropy_with_logits(sex_logits_record, record_sex.float())
-        record_loss = self.eta * (record_age_loss + record_sex_loss)
+            record_age_loss = 0.4 * self.delta_age * F.l1_loss(age_pred_record, record_age.float())
+            record_sex_loss = self.delta_sex * F.binary_cross_entropy_with_logits(sex_logits_record, record_sex.float())
+            record_loss = self.eta * (record_age_loss + record_sex_loss)
+        else:
+            z0 = loss.new_zeros(())
+            record_age_loss = z0
+            record_sex_loss = z0
+            record_loss = z0
 
         total_loss = loss + loss_temporal + record_loss
 
@@ -607,8 +654,13 @@ class DPSOM_ECG(nn.Module):
             torch.cat([zsex, amp_proj_sex], dim=-1)
         ).squeeze(-1)
 
-        attn_age = self.record_attention_age(mu, beat_valid, amp_context)
-        attn_sex = self.record_attention_sex(mu, beat_valid, amp_context)
+        if self.eta > 0.0:
+            attn_age = self.record_attention_age(mu, beat_valid, amp_context)
+            attn_sex = self.record_attention_sex(mu, beat_valid, amp_context)
+        else:
+            mean_w = self._masked_mean_weights(beat_valid)
+            attn_age = mean_w
+            attn_sex = mean_w
 
         age_pred_record = (age_pred_beat * attn_age).sum(dim=1)
         sex_logits_record = (sex_logits_beat * attn_sex).sum(dim=1)

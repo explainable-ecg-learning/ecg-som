@@ -11,7 +11,7 @@ class ECG_DataGenerator:
     """
 
     def __init__(self, ecg_dataset, batch_size=300, device=None, pin_memory=True,
-                 use_rr_features=True, preload_to_gpu=True):
+                 use_rr_features=False, preload_to_gpu=True):
         self.ecg_dataset = ecg_dataset
         self.batch_size = batch_size
         self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")

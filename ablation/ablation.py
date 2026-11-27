@@ -60,9 +60,15 @@ lr_low/high        : learning_rate
 wd_low/high        : weight_decay
 dropout_low/high   : dropout
 
+Notes
+-----
+Variants below override the pruned default configuration in ``src/config.py``
+(where ``age_corr_lambda_max=0.0``, ``eta=0.0``, ``probe_refit_interval=0``,
+``use_rr_features=False``). Variants that sweep ``age_corr_*`` parameters
+explicitly re-enable ``age_corr_lambda_max=0.30`` so they are not no-ops.
+
 Usage
 -----
-    cd /nfs/data8/schlegel/git/ecg-som
     source .venv/bin/activate
     python ablation/ablation.py                          # all variants
     python ablation/ablation.py --variants baseline no_temporal no_disentangle
@@ -132,10 +138,10 @@ VARIANTS: dict[str, dict] = {
 
     # --- Age-correction module ---
     "no_age_corr":      {"age_corr_lambda_max": 0.0},
-    "more_topk":        {"age_corr_topk": 8},
-    "less_topk":        {"age_corr_topk": 2},
-    "fast_ramp":        {"age_corr_ramp_epochs": 3},
-    "slow_ramp":        {"age_corr_ramp_epochs": 20},
+    "more_topk":        {"age_corr_lambda_max": 0.30, "age_corr_topk": 8},
+    "less_topk":        {"age_corr_lambda_max": 0.30, "age_corr_topk": 2},
+    "fast_ramp":        {"age_corr_lambda_max": 0.30, "age_corr_ramp_epochs": 3},
+    "slow_ramp":        {"age_corr_lambda_max": 0.30, "age_corr_ramp_epochs": 20},
 
     # --- Loss weight sweeps ---
     "theta_low":        {"theta": 0.01},

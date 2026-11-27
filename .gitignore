@@ -17,15 +17,25 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data, checkpoints, logs, and explorer cache
+# Data, checkpoints, logs, and explorer cache (keep directory skeletons via .gitkeep)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/explorer/*
+!data/explorer/.gitkeep
+models/*
+!models/.gitkeep
+logs/*
+!logs/.gitkeep
+explorer/cache/*
+!explorer/cache/.gitkeep
+explorer/dist/
 *.pkl
 *.npz
 *.ckpt
 *.zip
 *.log
-models/
-logs/
-explorer/cache/
 
 # Intermediate per-GPU ablation outputs
 ablation/ablation_results_gpu*.csv

@@ -1,5 +1,21 @@
 'use strict';
 
+// ── Runtime mode (FastAPI backend vs. Vercel static bundle vs. ?api=<url>) ──
+const _urlParams = new URLSearchParams(window.location.search);
+const _paramApi = (_urlParams.get('api') || '').trim().replace(/\/+$/, '');
+const _cfgApi = (window.EXPLORER_API_BASE || '').trim().replace(/\/+$/, '');
+const API_BASE = _paramApi || _cfgApi;
+const IS_STATIC_MODE = Boolean(window.EXPLORER_STATIC_MODE) && !API_BASE;
+
+const _staticState = {
+  modelsCatalog: null,
+  udaCatalog: null,
+  activeBundleId: null,
+  bundleData: null,
+  cellCache: new Map(),
+  lastUdaDemo: null,
+};
+
 // ── Constants ───────────────────────────────────────────────────────────────
 const LEAD_NAMES = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6'];
 // 16 distinct editorial colours for PTB-XL diagnostic subclasses (light theme)
@@ -20,13 +36,78 @@ const state = {
   currentCellData: null,   // last /api/cell response
   predictedCells: null,   // Set of "r,c" keys highlighted from /api/predict_*
   dominantPred: null,   // "r,c" of dominant predicted SOM cell
+  modelsCatalog: null,  // cached /api/models response
 };
+
+function switchTab(tabName) {
+  document.querySelectorAll('.nav-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabName);
+  });
+  document.querySelectorAll('.tab-view').forEach(view => {
+    view.classList.toggle('active', view.id === `view-${tabName}`);
+  });
+  hideTip();
+  if (tabName === 'compare' && typeof window.initCellCompare === 'function') {
+    window.initCellCompare();
+  } else if (tabName === 'uda' && typeof window.initUdaExplorer === 'function') {
+    window.initUdaExplorer();
+  } else if (tabName === 'overview' && typeof window.initSystemOverview === 'function') {
+    window.initSystemOverview();
+  } else if (tabName === 'som' && state.loaded) {
+    drawHeatmap();
+  }
+}
+
+function _syncPredictPanelMode() {
+  const panel = document.getElementById('predict-panel');
+  const outBox = document.getElementById('predict-result');
+  panel.style.display = 'block';
+  if (IS_STATIC_MODE) {
+    document.getElementById('new-ecg-path').disabled = true;
+    document.getElementById('new-ecg-file').disabled = true;
+    document.getElementById('new-ecg-fs').disabled = true;
+    document.getElementById('predict-btn').disabled = true;
+    outBox.style.display = 'block';
+    outBox.innerHTML = 'Live ECG file inference requires the local FastAPI/Docker backend (or append <code>?api=https://…</code> to connect to one).';
+  } else {
+    outBox.style.display = 'none';
+  }
+}
+
+function applyAdaptedToSom(data) {
+  if (!data || data.error) return;
+  state.loaded = true;
+  state.somDim = data.som_dim;
+  state.classNames = data.class_names;
+  state.cells = data.cells;
+  state.predictedCells = null;
+  state.dominantPred = null;
+  setStatus(data.info);
+  buildClassLegend(data.class_names);
+  _syncPredictPanelMode();
+  document.getElementById('cell-detail').style.display = 'none';
+  window.dispatchEvent(new CustomEvent('som-loaded'));
+  switchTab('som');
+}
 
 // ── Bootstrap ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  const metaEl = document.querySelector('.topbar-meta');
+  if (metaEl) {
+    if (IS_STATIC_MODE) metaEl.textContent += ' · Static Preview';
+    else if (API_BASE) metaEl.textContent += ' · Remote API';
+  }
+  document.querySelectorAll('.nav-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
   await fetchModels();
   document.getElementById('load-btn').addEventListener('click', loadData);
   document.getElementById('predict-btn').addEventListener('click', predictNewECG);
+  document.getElementById('add-to-compare-btn').addEventListener('click', () => {
+    if (state.currentCellData && typeof window.addCellToCompare === 'function') {
+      window.addCellToCompare(state.currentCellData.row, state.currentCellData.col);
+    }
+  });
   document.getElementById('color-mode').addEventListener('change', e => {
     state.colorMode = e.target.value;
     if (state.loaded) drawHeatmap();
@@ -36,6 +117,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const dp = document.getElementById('data-path');
   if (sel.options.length > 0 && dp.value) {
     loadData();
+  } else if (IS_STATIC_MODE) {
+    setStatus('Lightweight static deploy (no precomputed SOM bundles). Explore UDA Explorer & System Overview above.');
+    const hm = document.getElementById('heatmap-container');
+    if (hm) {
+      hm.innerHTML =
+        '<div style="padding:28px;color:var(--muted);line-height:1.6;">' +
+        '<strong style="color:var(--text);">Static Preview Notice</strong><br>' +
+        'No precomputed SOM bundles were included in this lightweight build. ' +
+        'Switch to <strong>UDA Explorer</strong> or <strong>System Overview</strong> above, or run ' +
+        '<code>python explorer/build_static_site.py &amp;&amp; vercel --prod</code> locally to include full interactive SOM &amp; Cell Compare matrices, ' +
+        'or pass <code>?api=https://your-backend</code>.' +
+        '</div>';
+    }
   }
 });
 
@@ -43,6 +137,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function fetchModels() {
   try {
     const data = await apiFetch('/api/models');
+    state.modelsCatalog = data;
     const sel = document.getElementById('ckpt-select');
     data.models.forEach(m => {
       const opt = document.createElement('option');
@@ -94,11 +189,11 @@ async function loadData() {
     state.dominantPred = null;
     setStatus(data.info);
     buildClassLegend(data.class_names);
-    document.getElementById('predict-panel').style.display = 'block';
-    document.getElementById('predict-result').style.display = 'none';
+    _syncPredictPanelMode();
 
     drawHeatmap();
     document.getElementById('cell-detail').style.display = 'none';
+    window.dispatchEvent(new CustomEvent('som-loaded'));
   } catch (e) {
     setStatus('Error: ' + e.message);
   } finally {
@@ -744,9 +839,272 @@ function drawPercentileGrid(containerId, pcts, tAxis, cfg = {}) {
   }
 }
 
+// ── Static-Mode Client Adapter (for Vercel / static CDN hosting) ─────────────
+async function _fetchJsonDirect(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`${resp.status}: ${text}`);
+  }
+  return resp.json();
+}
+
+function _jsDivergence(countsP, countsQ) {
+  const sp = countsP.reduce((s, v) => s + v, 0);
+  const sq = countsQ.reduce((s, v) => s + v, 0);
+  if (sp <= 0 || sq <= 0) return 0;
+  let sumP = 0;
+  let sumQ = 0;
+  for (let k = 0; k < countsP.length; k++) {
+    const p = countsP[k] / sp;
+    const q = countsQ[k] / sq;
+    const m = 0.5 * (p + q);
+    if (p > 0 && m > 0) sumP += p * Math.log2(p / m);
+    if (q > 0 && m > 0) sumQ += q * Math.log2(q / m);
+  }
+  return Math.max(0, Math.min(1, 0.5 * (sumP + sumQ)));
+}
+
+function _toroidalDist(r1, c1, r2, c2, H, W) {
+  const dr = Math.min(Math.abs(r1 - r2), H - Math.abs(r1 - r2));
+  const dc = Math.min(Math.abs(c1 - c2), W - Math.abs(c1 - c2));
+  return [dr + dc, Math.hypot(dr, dc)];
+}
+
+function _l2Norm(vec) {
+  let acc = 0;
+  for (let i = 0; i < vec.length; i++) acc += vec[i] * vec[i];
+  return Math.sqrt(acc);
+}
+
+function _l2Dist(a, b) {
+  let acc = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = a[i] - b[i];
+    acc += d * d;
+  }
+  return Math.sqrt(acc);
+}
+
+function _cosSim(a, b) {
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+  return dot / Math.max(_l2Norm(a) * _l2Norm(b), 1e-8);
+}
+
+function _waveformRmse(p1, p2) {
+  let acc = 0;
+  let cnt = 0;
+  for (let li = 0; li < p1.length; li++) {
+    const a = p1[li];
+    const b = p2[li];
+    for (let ti = 0; ti < a.length; ti++) {
+      const d = a[ti] - b[ti];
+      acc += d * d;
+      cnt += 1;
+    }
+  }
+  return cnt > 0 ? Math.sqrt(acc / cnt) : 0;
+}
+
+async function _loadStaticSomBundle(bundleId, infoSuffix = '') {
+  const data = await _fetchJsonDirect(`/static-data/som/${bundleId}.json`);
+  _staticState.activeBundleId = bundleId;
+  _staticState.bundleData = data;
+  _staticState.cellCache.clear();
+  if (infoSuffix && data.info && !data.info.includes(infoSuffix.trim())) {
+    data.info += infoSuffix;
+  }
+  return data;
+}
+
+async function _staticCompareCells(body) {
+  const bundle = _staticState.bundleData;
+  if (!bundle) throw new Error('400: No SOM bundle loaded.');
+  const reqCells = body?.cells || [];
+  if (!reqCells.length || reqCells.length > 6) {
+    throw new Error('400: Select between 1 and 6 SOM cells to compare.');
+  }
+  const [H, W] = bundle.som_dim;
+  const coords = [];
+  const seen = new Set();
+  for (const pair of reqCells) {
+    if (!Array.isArray(pair) || pair.length !== 2) throw new Error('400: Invalid cell coordinate.');
+    const r = Number(pair[0]);
+    const c = Number(pair[1]);
+    if (r < 0 || r >= H || c < 0 || c >= W) throw new Error(`404: Cell (${r}, ${c}) out of range.`);
+    const key = `${r},${c}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      coords.push([r, c]);
+    }
+  }
+
+  const details = await Promise.all(coords.map(([r, c]) => staticApiFetch(`/api/cell/${r}/${c}`)));
+  const defaultAgeLabels = ['<30', '30s', '40s', '50s', '60s', '70s', '80+'];
+  const cellPayloads = coords.map(([r, c], idx) => {
+    const flat = r * W + c;
+    const summary = bundle.cells[flat] || {};
+    const stats = (bundle.cell_stats && bundle.cell_stats[flat]) || {};
+    const detail = details[idx] || {};
+    return {
+      row:            r,
+      col:            c,
+      count:          detail.n_total ?? summary.count ?? 0,
+      majority_label: summary.majority_label || '',
+      purity:         stats.purity ?? 0,
+      class_counts:   summary.class_counts || [],
+      top_classes:    stats.top_classes || [],
+      age_mean:       stats.age_mean ?? null,
+      age_std:        stats.age_std ?? null,
+      age_median:     stats.age_median ?? null,
+      age_bins:       stats.age_bins || [0, 0, 0, 0, 0, 0, 0],
+      age_bin_labels: stats.age_bin_labels || defaultAgeLabels,
+      female_pct:     stats.female_pct ?? null,
+      proto_leads:    detail.proto_leads || summary.proto_leads,
+      percentiles:    detail.percentiles || null,
+    };
+  });
+
+  const emb = bundle.embeddings || null;
+  const pairwise = coords.map(([r1, c1], i) => coords.map(([r2, c2], j) => {
+    const flat1 = r1 * W + c1;
+    const flat2 = r2 * W + c2;
+    const [tl1, tl2] = _toroidalDist(r1, c1, r2, c2, H, W);
+    const e1 = emb && emb[r1]?.[c1];
+    const e2 = emb && emb[r2]?.[c2];
+    const p1 = bundle.cells[flat1]?.proto_leads || [];
+    const p2 = bundle.cells[flat2]?.proto_leads || [];
+    return {
+      toroidal_l1:   tl1,
+      toroidal_l2:   tl2,
+      latent_l2:     (e1 && e2) ? _l2Dist(e1, e2) : 0,
+      latent_cos:    (e1 && e2) ? _cosSim(e1, e2) : 1,
+      waveform_rmse: (p1.length && p2.length) ? _waveformRmse(p1, p2) : 0,
+      js_divergence: _jsDivergence(cellPayloads[i].class_counts, cellPayloads[j].class_counts),
+    };
+  }));
+
+  return {
+    som_dim:     bundle.som_dim,
+    class_names: bundle.class_names,
+    t_axis:      bundle.t_axis || details[0]?.t_axis || [],
+    cells:       cellPayloads,
+    pairwise,
+  };
+}
+
+async function staticApiFetch(url, opts = {}) {
+  const path = url.split('?')[0];
+  const body = opts.body ? JSON.parse(opts.body) : {};
+
+  if (path === '/api/models') {
+    if (!_staticState.modelsCatalog) {
+      _staticState.modelsCatalog = await _fetchJsonDirect('/static-data/models.json');
+    }
+    return _staticState.modelsCatalog;
+  }
+
+  if (path === '/api/load') {
+    const cat = _staticState.modelsCatalog || await staticApiFetch('/api/models');
+    const ckpt = body.ckpt || '';
+    const dataPath = body.data_path || '';
+    const split = body.split || 'test';
+    const bundles = cat.bundles || {};
+    let bundleId = bundles[`${ckpt}|${dataPath}|${split}`];
+    let suffix = '';
+    if (!bundleId && split !== 'test') {
+      bundleId = bundles[`${ckpt}|${dataPath}|test`];
+      if (bundleId) suffix = '  |  (static preview: test split)';
+    }
+    if (!bundleId) {
+      const meta = cat.bundle_meta || {};
+      const match = Object.entries(meta).find(([, m]) => m.ckpt === ckpt)
+        || Object.entries(meta).find(([, m]) => m.data_path === dataPath)
+        || Object.entries(meta)[0];
+      if (!match) {
+        throw new Error('No precomputed SOM bundle exists for this lightweight static build.');
+      }
+      bundleId = match[0];
+      suffix = `  |  (static preview bundle: ${match[1].data_path})`;
+    }
+    return _loadStaticSomBundle(bundleId, suffix);
+  }
+
+  const cellMatch = path.match(/^\/api\/cell\/(\d+)\/(\d+)$/);
+  if (cellMatch) {
+    if (!_staticState.activeBundleId) {
+      throw new Error('400: No SOM bundle loaded yet.');
+    }
+    const r = Number(cellMatch[1]);
+    const c = Number(cellMatch[2]);
+    const key = `${_staticState.activeBundleId}:${r},${c}`;
+    if (!_staticState.cellCache.has(key)) {
+      const detail = await _fetchJsonDirect(`/static-data/cells/${_staticState.activeBundleId}/${r}_${c}.json`);
+      _staticState.cellCache.set(key, detail);
+    }
+    return _staticState.cellCache.get(key);
+  }
+
+  if (path === '/api/cells/compare') {
+    return _staticCompareCells(body);
+  }
+
+  if (path === '/api/overview') {
+    return _fetchJsonDirect('/static-data/overview.json');
+  }
+
+  if (path === '/api/uda/results') {
+    if (!_staticState.udaCatalog) {
+      _staticState.udaCatalog = await _fetchJsonDirect('/static-data/uda_results.json');
+    }
+    return _staticState.udaCatalog;
+  }
+
+  if (path === '/api/uda/run') {
+    const udaCat = _staticState.udaCatalog || await staticApiFetch('/api/uda/results');
+    const demos = udaCat.static_demos || [];
+    if (!demos.length) {
+      throw new Error('Live UDA Playground requires a FastAPI backend or precomputed UDA demo snapshots.');
+    }
+    const method = body.method || 'uda_bw_ot';
+    const ckpt = body.ckpt || '';
+    const tgt = body.tgt_data || '';
+    const match = demos.find(d => d.ckpt === ckpt && d.tgt_data === tgt && d.method === method)
+      || demos.find(d => d.tgt_data === tgt && d.method === method)
+      || demos.find(d => d.method === method)
+      || demos[0];
+    const demoData = await _fetchJsonDirect(match.url);
+    _staticState.lastUdaDemo = match;
+    const isExact = match.tgt_data === tgt && match.method === method;
+    demoData.note = isExact
+      ? 'Precomputed Vercel demo snapshot (default params). Run locally or pass ?api= for custom sweeps.'
+      : `Matched closest static demo (${match.tgt_data}, ${match.method}). Pass ?api= for custom runs.`;
+    return demoData;
+  }
+
+  if (path === '/api/uda/apply') {
+    const demo = _staticState.lastUdaDemo;
+    if (!demo || !demo.adapted_bundle_id) {
+      throw new Error('400: Run a UDA preview first before applying its adapted SOM.');
+    }
+    return _loadStaticSomBundle(demo.adapted_bundle_id);
+  }
+
+  if (path === '/api/predict_path' || path === '/api/predict_upload') {
+    throw new Error('Live ECG inference requires local FastAPI/Docker or passing ?api=https://your-backend.');
+  }
+
+  throw new Error(`Unsupported static endpoint: ${path}`);
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 async function apiFetch(url, opts) {
-  const resp = await fetch(url, opts);
+  if (IS_STATIC_MODE) {
+    return staticApiFetch(url, opts);
+  }
+  const target = API_BASE ? `${API_BASE}${url}` : url;
+  const resp = await fetch(target, opts);
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`${resp.status}: ${text}`);
@@ -759,6 +1117,33 @@ function setStatus(msg, isHtml = false) {
   if (isHtml) el.innerHTML = msg; else el.textContent = msg;
 }
 
+function showTooltipHtml(ev, html) {
+  const tip = document.getElementById('tooltip');
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  moveTip(ev);
+}
+
 function dim(msg) {
   return `<p style="color:var(--muted);padding:10px 0">${msg}</p>`;
 }
+
+window.explorerShared = {
+  apiFetch,
+  getApiBase: () => API_BASE,
+  isStaticMode: () => IS_STATIC_MODE,
+  CLASS_COLORS,
+  LEAD_NAMES,
+  showTooltipHtml,
+  moveTip,
+  hideTip,
+  switchTab,
+  applyAdaptedToSom,
+  getModelsCatalog: () => state.modelsCatalog,
+  getSomState: () => ({
+    loaded: state.loaded,
+    somDim: state.somDim,
+    classNames: state.classNames,
+    cells: state.cells,
+  }),
+};

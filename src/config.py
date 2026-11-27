@@ -17,7 +17,7 @@ class DPSOM_Config:
         self.gamma = 10.0
         self.theta = 0.1
         self.tau = 1.6   # Temporal smoothness weight
-        self.eta = 1.0   # Record Attention weight
+        self.eta = 0.0   # Record Attention weight (disabled by default after 3-seed ablation)
         self.delta_age = 1.0
         self.delta_sex = 1.0
         self.num_beats = 5
@@ -28,8 +28,8 @@ class DPSOM_Config:
         self.logdir = f"logs/{self.ex_name}"
         self.modelpath = f"models/{self.ex_name}/{self.ex_name}.ckpt"
         self.data_set = "PTB-XL"
-        self.data_path = "data/PTB-XL"
-        self.error_labels_path = "data/ptbxl_error_labels.csv"
+        self.data_path = "data/raw/ptbxl"
+        self.error_labels_path = "data/metadata/ptbxl_error_labels.csv"
         self.max_error_severity = 2         # 0..3 (2 drops '3_severe_error' from train/val)
         self.exclude_error_flags = ["err_scp_zero_diagnostic"]
         self.dropout = 0.2
@@ -50,7 +50,7 @@ class DPSOM_Config:
 
         # --- Age-correction module ---
         self.age_corr_topk = 4              # TopK SOM nodes used for correction
-        self.age_corr_lambda_max = 0.30     # maximum correction gate value
+        self.age_corr_lambda_max = 0.0      # disabled by default after 3-seed ablation (set >0 to enable)
         self.age_corr_ramp_epochs = 10      # epochs over which gate ramps to max
 
         # --- SOM initialisation ---
@@ -64,11 +64,11 @@ class DPSOM_Config:
         # --- Probe-fitting phases ---
         self.num_epochs_probe = 3           # epochs for age/sex linear probe fitting
         self.lr_probe = 1e-3                # learning rate for probe fitting
-        self.probe_refit_interval = 6       # refit probes every N epochs in Phase 3 (0 = off)
+        self.probe_refit_interval = 0       # disabled by default after 3-seed ablation (set >0 to refit every N epochs)
         self.probe_refit_epochs = 1         # epochs per periodic probe refit
 
         # --- Features & checkpointing ---
-        self.use_rr_features = True         # append local (RR_prev, RR_next) to beat_meta
+        self.use_rr_features = False        # disabled by default after 3-seed ablation (set True for local RR_prev/RR_next)
         self.use_best_checkpoint = True     # evaluate best val-NMI checkpoint after Phase 3
 
         # --- GPU acceleration ---

@@ -147,69 +147,18 @@ def log_som_visualizations(
     class_names = getattr(dataset, "class_names", ['CD', 'HYP', 'MI', 'NORM', 'STTC'])
     num_classes = len(class_names)
 
+    from src.training.trainer import load_dpsom_checkpoint
+
     try:
-        checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model, meta = load_dpsom_checkpoint(ckpt_path, device)
     except FileNotFoundError:
         print(f"Warning: Checkpoint not found at {ckpt_path}. Skipping.")
         return
 
-    meta  = checkpoint.get("meta", {}) if isinstance(checkpoint, dict) else {}
-    state = checkpoint
-    if isinstance(state, dict):
-        for k in ["state_dict", "model", "net", "weights"]:
-            if k in state and isinstance(state[k], dict):
-                state = state[k]
-                break
-
-    def _strip(sd, prefix):
-        return {k[len(prefix):]: v for k, v in sd.items()} if any(k.startswith(prefix) for k in sd) else sd
-
-    state = _strip(_strip(state, "module."), "model.")
-
-    # Remap legacy enc_* / dec_* layer names to current convention
-    _LEGACY = {
-        "enc_conv1": "conv1", "enc_bn1": "bn1", "enc_se1": "se1",
-        "enc_conv2": "conv2", "enc_bn2": "bn2", "enc_se2": "se2",
-        "dec_conv1": "conv1", "dec_bn1": "bn1", "dec_se1": "se1",
-        "dec_film1": "film1", "dec_conv2": "conv2", "dec_bn2": "bn2",
-        "dec_se2": "se2", "dec_film2": "film2", "dec_conv_out": "conv_out",
-    }
-    state = {
-        ".".join(_LEGACY.get(p, p) for p in k.split(".")): v
-        for k, v in state.items()
-    }
-
-    input_length   = int(meta.get("input_length",   X_test.shape[1]))
-    input_channels = int(meta.get("input_channels", X_test.shape[2]))
-    som_dim        = tuple(meta.get("som_dim", ()))
-    latent_dim     = int(meta.get("latent_dim", 0))
-
-    if len(som_dim) != 2 or latent_dim <= 0:
-        embed_key = next(
-            (k for k, v in state.items() if isinstance(v, torch.Tensor) and v.ndim == 3 and "embeddings" in k),
-            None,
-        )
-        if embed_key is None:
-            print("Error: Cannot infer SOM dimensions from checkpoint. Skipping.")
-            return
-        H_size, W_size, latent_dim = state[embed_key].shape
-        som_dim = (int(H_size), int(W_size))
-
-    H_size, W_size = som_dim
-
-    model = DPSOM_ECG(
-        latent_dim=latent_dim, som_dim=som_dim,
-        input_length=input_length, input_channels=input_channels,
-        encoder_base_channels_1=int(meta.get("encoder_base_channels_1", 32)),
-        encoder_base_channels_2=int(meta.get("encoder_base_channels_2", 64)),
-        encoder_kernel_size=int(meta.get("encoder_kernel_size", 7)),
-        encoder_fc_hidden_dim=int(meta.get("encoder_fc_hidden_dim", 512)),
-        z_age_dim_factor=float(meta.get("z_age_dim_factor", 0.25)),
-        z_sex_dim_factor=float(meta.get("z_sex_dim_factor", 0.25)),
-        amp_context_dim=meta.get("amp_context_dim", None),
-    ).to(device)
-    model.load_state_dict(state, strict=False)
-    model.eval()
+    input_length   = int(meta["input_length"])
+    input_channels = int(meta["input_channels"])
+    H_size, W_size = tuple(int(v) for v in meta["som_dim"])
+    latent_dim     = int(meta["latent_dim"])
 
     x_t = torch.from_numpy(X_test.transpose(0, 2, 1)).contiguous().float().to(device)
 

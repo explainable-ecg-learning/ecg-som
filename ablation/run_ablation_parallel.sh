@@ -6,7 +6,6 @@
 # ablation/ablation_results_all.csv at the end.
 #
 # Usage:
-#   cd /nfs/data8/schlegel/git/ecg-som
 #   bash ablation/run_ablation_parallel.sh
 # ---------------------------------------------------------------------------
 
