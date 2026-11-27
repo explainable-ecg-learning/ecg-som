@@ -154,45 +154,45 @@ def _default_bundle_specs(repo_root: str) -> list[dict]:
     else:
         ptbxl_abs, ptbxl_val, ptbxl_lbl = ptbxl_pkl, "processed/ptbxl_100_T-12ms.pkl", "PTB-XL test (processed)"
 
-    ckpt_best = "models/gpu_fast_seed42/gpu_fast_seed42_best.ckpt"
-    ckpt_large = "models/abl_large_som_32_16-16_2026-05-04_dc308/abl_large_som_32_16-16_2026-05-04_dc308.ckpt"
+    ckpt_best = "models/dpsom_pruned_8x8/dpsom_pruned_8x8_best.ckpt"
+    ckpt_large = "models/dpsom_v2_16x16/dpsom_v2_16x16_best.ckpt"
 
     return [
         {
-            "id":         "gpu_fast_seed42_best_ptbxl",
+            "id":         "dpsom_pruned_8x8_best_ptbxl",
             "ckpt_abs":   os.path.join(repo_root, ckpt_best),
             "ckpt_val":   ckpt_best,
-            "ckpt_label": ckpt_best,
+            "ckpt_label": "dpsom_pruned_8x8_best (8×8 · NMI=0.1801)",
             "data_abs":   ptbxl_abs,
             "data_val":   ptbxl_val,
             "data_label": ptbxl_lbl,
             "split":      "test",
         },
         {
-            "id":         "gpu_fast_seed42_best_georgia",
+            "id":         "dpsom_pruned_8x8_best_georgia",
             "ckpt_abs":   os.path.join(repo_root, ckpt_best),
             "ckpt_val":   ckpt_best,
-            "ckpt_label": ckpt_best,
+            "ckpt_label": "dpsom_pruned_8x8_best (8×8 · NMI=0.1801)",
             "data_abs":   os.path.join(repo_root, "data", "processed", "georgia_transfer_100.pkl"),
             "data_val":   "processed/georgia_transfer_100.pkl",
             "data_label": "processed/georgia_transfer_100.pkl",
             "split":      "test",
         },
         {
-            "id":         "gpu_fast_seed42_best_chapman",
+            "id":         "dpsom_pruned_8x8_best_chapman",
             "ckpt_abs":   os.path.join(repo_root, ckpt_best),
             "ckpt_val":   ckpt_best,
-            "ckpt_label": ckpt_best,
+            "ckpt_label": "dpsom_pruned_8x8_best (8×8 · NMI=0.1801)",
             "data_abs":   os.path.join(repo_root, "data", "processed", "chapman_transfer_100.pkl"),
             "data_val":   "processed/chapman_transfer_100.pkl",
             "data_label": "processed/chapman_transfer_100.pkl",
             "split":      "test",
         },
         {
-            "id":          "abl_large_som_ptbxl",
+            "id":          "dpsom_v2_16x16_best_ptbxl",
             "ckpt_abs":    os.path.join(repo_root, ckpt_large),
             "ckpt_val":    ckpt_large,
-            "ckpt_label":  "[abl] large_som_32_16-16 (16×16)",
+            "ckpt_label":  "dpsom_v2_16x16_best (16×16 v2 · RMSE=0.389 · Sex=0.895)",
             "data_abs":    ptbxl_abs,
             "data_val":    ptbxl_val,
             "data_label":  ptbxl_lbl,
@@ -318,7 +318,7 @@ def _export_uda_demos(
         extract_domain_moments,
     )
 
-    ckpt_val = "models/gpu_fast_seed42/gpu_fast_seed42_best.ckpt"
+    ckpt_val = "models/dpsom_pruned_8x8/dpsom_pruned_8x8_best.ckpt"
     ckpt_abs = os.path.join(repo_root, ckpt_val)
     src_val = "processed/ptbxl_100_T-12ms.pkl"
     src_abs = os.path.join(repo_root, "data", src_val)

@@ -715,6 +715,58 @@ def test_static_site_builder_for_vercel():
         assert {"row", "col", "n_total", "proto_leads", "percentiles", "samples", "t_axis"}.issubset(c00.keys())
 
 
+def test_dpsom_v2_multiscale_res_arch_and_checkpoint():
+    from src.training.trainer import _compute_target_distribution
+
+    ds = _make_synth_ecg_dataset(n_records=10, seed=7)
+    gen = ECG_DataGenerator(
+        ds, batch_size=5, device=torch.device("cpu"), pin_memory=False, use_rr_features=False
+    )
+    m = DPSOM_ECG(
+        latent_dim=16, som_dim=(4, 4), input_length=120, input_channels=12,
+        encoder_fc_hidden_dim=64, eta=0.0, age_corr_lambda_max=0.0,
+        amp_context_dim=24, arch_version="v2",
+    )
+    assert m.arch_version == "v2" and m.age_loss_type == "ordinal" and m.amp_proj_dim == 24
+    assert m.encoder.out_channels == 64 and m.encoder.out_length == 30
+
+    p_hyb = _compute_target_distribution(
+        m, gen, "train", torch.device("cpu"), use_amp=False, alpha_rec=0.20, rho=0.85,
+    )
+    n_train_beats = gen.get_flat_beats_tensor(split="train").shape[0]
+    assert p_hyb.shape == (n_train_beats, 16)
+    assert torch.allclose(p_hyb.sum(dim=1), torch.ones(n_train_beats), atol=1e-4)
+
+    tr_gen = gen.get_record_batch_generator("train", max_beats=4, shuffle=False)
+    beats, masks, meta, valid, gidx, age, sex, _ = next(tr_gen)
+    vm = gidx >= 0
+    p_batch = torch.zeros(beats.shape[0], beats.shape[1], 16)
+    p_batch[vm] = p_hyb[gidx[vm].long()]
+
+    losses = m.loss_batch(beats, masks, meta, valid, age, sex, p_batch)
+    assert torch.isfinite(losses[0])
+    losses[0].backward()
+    for p in m.parameters():
+        if p.grad is not None:
+            assert torch.isfinite(p.grad).all()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ckpt_p = os.path.join(tmp, "v2.ckpt")
+        torch.save(_build_checkpoint(m), ckpt_p)
+        m_loaded, ckpt_meta = load_dpsom_checkpoint(ckpt_p, torch.device("cpu"))
+        assert m_loaded.arch_version == "v2" and ckpt_meta["arch_version"] == "v2"
+        m.eval()
+        m_loaded.eval()
+        with torch.no_grad():
+            mu1, _, a1, s1 = m._encode(beats.reshape(-1, 12, 120)[:4])
+            mu2, _, a2, s2 = m_loaded._encode(beats.reshape(-1, 12, 120)[:4])
+            assert torch.allclose(mu1, mu2, atol=1e-5)
+            assert torch.allclose(a1, a2, atol=1e-5) and torch.allclose(s1, s2, atol=1e-5)
+            d1 = m.decoder(mu1)
+            d2 = m_loaded.decoder(mu2)
+            assert d1.shape == (4, 12 * 120) and torch.allclose(d1, d2, atol=1e-5)
+
+
 if __name__ == "__main__":
     import sys, traceback
     tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

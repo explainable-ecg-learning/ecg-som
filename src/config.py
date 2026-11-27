@@ -68,6 +68,9 @@ class DPSOM_Config:
         self.probe_refit_epochs = 1         # epochs per periodic probe refit
 
         # --- Features & checkpointing ---
+        self.arch_version = "v1"            # "v1" (depthwise Conv1D) or "v2" (multi-scale residual + ordinal age)
+        self.dec_alpha_rec = 0.0            # Phase 3 record-level DEC blend (v2 default: 0.20)
+        self.dec_rho = 1.0                  # Phase 3 cluster-frequency damping exponent (v2 default: 0.85)
         self.use_rr_features = False        # disabled by default after 3-seed ablation (set True for local RR_prev/RR_next)
         self.use_best_checkpoint = True     # evaluate best val-NMI checkpoint after Phase 3
 

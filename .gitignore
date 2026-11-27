@@ -33,6 +33,10 @@ explorer/cache/*
 *.pkl
 *.npz
 *.ckpt
+!models/dpsom_pruned_8x8/
+!models/dpsom_pruned_8x8/dpsom_pruned_8x8_best.ckpt
+!models/dpsom_v2_16x16/
+!models/dpsom_v2_16x16/dpsom_v2_16x16_best.ckpt
 *.zip
 *.log
 

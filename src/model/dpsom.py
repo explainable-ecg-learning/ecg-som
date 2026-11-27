@@ -3,7 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple
 
-from src.model.codec import LeadWiseConvEncoder, LeadWiseConvDecoder
+from src.model.codec import (
+    LeadWiseConvEncoder,
+    LeadWiseConvDecoder,
+    MultiScaleResConvEncoder,
+    ResidualECGDecoder,
+)
 
 
 class DPSOM_ECG(nn.Module):
@@ -50,12 +55,20 @@ class DPSOM_ECG(nn.Module):
         som_init_std: float = 0.05,
         # Context metadata dimension (2*C for amp stats, or 2*C+2 with RR intervals)
         amp_context_dim: int | None = None,
+        # Architecture version ("v1" = original depthwise Conv1D, "v2" = multi-scale residual + ordinal age)
+        arch_version: str = "v1",
+        age_loss_type: str | None = None,
     ):
         super().__init__()
         self.latent_dim = latent_dim
         self.som_dim = som_dim
         self.input_length = input_length
         self.input_channels = input_channels
+        self.arch_version = str(arch_version or "v1").lower()
+        self.age_loss_type = (
+            str(age_loss_type) if age_loss_type is not None
+            else ("ordinal" if self.arch_version == "v2" else "ce")
+        )
 
         self.alpha = alpha
         self.beta = beta
@@ -78,7 +91,7 @@ class DPSOM_ECG(nn.Module):
         self.num_age_bins = 88
 
         self.amp_context_dim = int(amp_context_dim) if amp_context_dim is not None else 2 * self.input_channels
-        self.amp_proj_dim = 12
+        self.amp_proj_dim = 24 if self.arch_version == "v2" else 12
         self.amp_proj_age = nn.Sequential(
             nn.Linear(self.amp_context_dim, self.amp_proj_dim),
             nn.LayerNorm(self.amp_proj_dim),
@@ -100,6 +113,14 @@ class DPSOM_ECG(nn.Module):
         nn.init.trunc_normal_(self._embeddings, mean=0.0, std=som_init_std,
                                a=-2 * som_init_std, b=2 * som_init_std)
 
+        # Store architecture params for checkpoint metadata
+        self._encoder_base_channels_1 = encoder_base_channels_1
+        self._encoder_base_channels_2 = encoder_base_channels_2
+        self._encoder_kernel_size = encoder_kernel_size
+        self._encoder_fc_hidden_dim = encoder_fc_hidden_dim
+        self._z_age_dim_factor = z_age_dim_factor
+        self._z_sex_dim_factor = z_sex_dim_factor
+
         # Use same-padding (kernel_size // 2) so out_length is independent of kernel_size
         _enc_kwargs = dict(
             input_channels=self.input_channels,
@@ -109,16 +130,18 @@ class DPSOM_ECG(nn.Module):
             kernel_size=encoder_kernel_size,
             padding=encoder_kernel_size // 2,
         )
-        # Store architecture params for checkpoint metadata
-        self._encoder_base_channels_1 = encoder_base_channels_1
-        self._encoder_base_channels_2 = encoder_base_channels_2
-        self._encoder_kernel_size = encoder_kernel_size
-        self._encoder_fc_hidden_dim = encoder_fc_hidden_dim
-        self._z_age_dim_factor = z_age_dim_factor
-        self._z_sex_dim_factor = z_sex_dim_factor
-        self.encoder     = LeadWiseConvEncoder(**_enc_kwargs)
-        self.encoder_age = LeadWiseConvEncoder(**_enc_kwargs)
-        self.encoder_sex = LeadWiseConvEncoder(**_enc_kwargs)
+        if self.arch_version == "v2":
+            self.encoder = MultiScaleResConvEncoder(
+                input_channels=self.input_channels,
+                input_length=self.input_length,
+            )
+            # Keep lightweight lead-wise depthwise encoders on demographic streams for stronger OOD generalization
+            self.encoder_age = LeadWiseConvEncoder(**_enc_kwargs)
+            self.encoder_sex = LeadWiseConvEncoder(**_enc_kwargs)
+        else:
+            self.encoder     = LeadWiseConvEncoder(**_enc_kwargs)
+            self.encoder_age = LeadWiseConvEncoder(**_enc_kwargs)
+            self.encoder_sex = LeadWiseConvEncoder(**_enc_kwargs)
 
         self.dropout_layer = nn.Dropout(p=self.dropout)
 
@@ -131,28 +154,50 @@ class DPSOM_ECG(nn.Module):
         self.enc_age = nn.Linear(encoder_fc_hidden_dim, self.z_age_dim)
         self.enc_sex = nn.Linear(encoder_fc_hidden_dim, self.z_sex_dim)
 
-        self.decoder = LeadWiseConvDecoder(
-            z_dim=self.z_shape_dim,
-            input_channels=self.input_channels,
-            input_length=self.input_length,
-            enc_out_channels=int(self.encoder.out_channels),
-            conv_out_len=int(self.encoder.out_length),
-            dropout=self.dropout,
-            base_channels_1=encoder_base_channels_1,
-            kernel_size=encoder_kernel_size,
-            padding=encoder_kernel_size // 2,
-        )
-
-        self.age_head = nn.Sequential(
-            nn.Linear(self.z_age_dim + self.amp_proj_dim, 32),
-            nn.LeakyReLU(0.2),
-            nn.Linear(32, self.num_age_bins),
-        )
-        self.sex_head = nn.Sequential(
-            nn.Linear(self.z_sex_dim + self.amp_proj_dim, 8),
-            nn.LeakyReLU(0.2),
-            nn.Linear(8, 1),
-        )
+        if self.arch_version == "v2":
+            self.decoder = ResidualECGDecoder(
+                z_dim=self.z_shape_dim,
+                input_channels=self.input_channels,
+                input_length=self.input_length,
+                conv_out_len=max(1, self.input_length // 4),
+                dropout=self.dropout,
+            )
+            self.age_head = nn.Sequential(
+                nn.Linear(self.z_age_dim + self.amp_proj_dim, 64),
+                nn.LayerNorm(64),
+                nn.SiLU(),
+                nn.Dropout(0.1),
+                nn.Linear(64, self.num_age_bins),
+            )
+            self.sex_head = nn.Sequential(
+                nn.Linear(self.z_sex_dim + self.amp_proj_dim, 32),
+                nn.LayerNorm(32),
+                nn.SiLU(),
+                nn.Dropout(0.1),
+                nn.Linear(32, 1),
+            )
+        else:
+            self.decoder = LeadWiseConvDecoder(
+                z_dim=self.z_shape_dim,
+                input_channels=self.input_channels,
+                input_length=self.input_length,
+                enc_out_channels=int(self.encoder.out_channels),
+                conv_out_len=int(self.encoder.out_length),
+                dropout=self.dropout,
+                base_channels_1=encoder_base_channels_1,
+                kernel_size=encoder_kernel_size,
+                padding=encoder_kernel_size // 2,
+            )
+            self.age_head = nn.Sequential(
+                nn.Linear(self.z_age_dim + self.amp_proj_dim, 32),
+                nn.LeakyReLU(0.2),
+                nn.Linear(32, self.num_age_bins),
+            )
+            self.sex_head = nn.Sequential(
+                nn.Linear(self.z_sex_dim + self.amp_proj_dim, 8),
+                nn.LeakyReLU(0.2),
+                nn.Linear(8, 1),
+            )
 
         self.rec_attn_age = nn.Sequential(
             nn.Linear(self.latent_dim + self.amp_proj_dim, self.latent_dim // 2),
@@ -504,8 +549,18 @@ class DPSOM_ECG(nn.Module):
 
     def meta_loss(self, z_age, z_sex, amp_context, age_target, sex_target, z_morph):
         age_logits = self.age_logits_with_disease_correction(z_age, amp_context, z_morph)
-        t = ((age_target - self.min_age) / (self.max_age - self.min_age + 1e-8) * (self.num_age_bins - 1)).clamp(0, self.num_age_bins - 1).long()
-        l_age = F.cross_entropy(age_logits, t)
+        if self.age_loss_type == "ordinal":
+            bins = self.age_bin_values.to(device=age_logits.device, dtype=torch.float32)
+            tgt_age = age_target.float().clamp(float(self.min_age), float(self.max_age)).unsqueeze(1)
+            sigma = 2.5
+            target_dist = torch.softmax(-0.5 * ((bins.unsqueeze(0) - tgt_age) / sigma) ** 2, dim=-1)
+            log_probs = F.log_softmax(age_logits.float(), dim=-1)
+            kl_loss = F.kl_div(log_probs, target_dist, reduction="batchmean")
+            exp_age = (log_probs.exp() * bins.unsqueeze(0)).sum(dim=-1)
+            l_age = kl_loss + 0.15 * F.smooth_l1_loss(exp_age, age_target.float(), beta=2.0)
+        else:
+            t = ((age_target - self.min_age) / (self.max_age - self.min_age + 1e-8) * (self.num_age_bins - 1)).clamp(0, self.num_age_bins - 1).long()
+            l_age = F.cross_entropy(age_logits, t)
 
         amp_proj_s = self.amp_proj_sex(amp_context)
         l_sex = F.binary_cross_entropy_with_logits(

@@ -99,6 +99,8 @@ def _build_checkpoint(model):
             "age_corr_ramp_epochs":     int(getattr(model, "age_corr_ramp_epochs", 10)),
             "eta":                      float(getattr(model, "eta", 0.0)),
             "alpha":                    float(getattr(model, "alpha", 10.0)),
+            "arch_version":             str(getattr(model, "arch_version", "v1")),
+            "age_loss_type":            str(getattr(model, "age_loss_type", "ce")),
         },
     }
 
@@ -178,6 +180,8 @@ def load_dpsom_checkpoint(
     age_corr_ramp_epochs = int(meta.get("age_corr_ramp_epochs", 10))
     eta                  = float(meta.get("eta", 1.0))
     alpha                = float(meta.get("alpha", 10.0))
+    arch_version         = str(meta.get("arch_version", "v1"))
+    age_loss_type        = meta.get("age_loss_type")
 
     model = DPSOM_ECG(
         latent_dim=latent_dim,
@@ -196,6 +200,8 @@ def load_dpsom_checkpoint(
         age_corr_lambda_max=age_corr_lambda_max,
         age_corr_ramp_epochs=age_corr_ramp_epochs,
         amp_context_dim=amp_context_dim,
+        arch_version=arch_version,
+        age_loss_type=age_loss_type,
     ).to(dev)
 
     if "_train_epoch" not in state:
@@ -362,7 +368,16 @@ def _run_som_initialization_phase(
     return step
 
 
-def _compute_target_distribution(model, generator, mode, device, chunk_size=8192, use_amp: bool = True):
+def _compute_target_distribution(
+    model,
+    generator,
+    mode,
+    device,
+    chunk_size=8192,
+    use_amp: bool = True,
+    alpha_rec: float = 0.0,
+    rho: float = 1.0,
+):
     beats_flat = generator.get_flat_beats_tensor(split=mode)
     model.eval()
     q_list = []
@@ -373,7 +388,20 @@ def _compute_target_distribution(model, generator, mode, device, chunk_size=8192
                 x = x.to(device, non_blocking=True)
             q_list.append(model.q_p(x).float())
     q_all = torch.cat(q_list, dim=0)
-    p = (q_all * q_all) / q_all.sum(dim=0, keepdim=True).clamp_min(1e-12)
+    if alpha_rec > 0.0:
+        pack = generator._preload_split_tensors(mode)
+        rec_gidx = pack["rec_gidx"].to(device)
+        valid_rec = rec_gidx >= 0
+        g_safe = rec_gidx.clamp_min(0)
+        q_rec_beats = q_all[g_safe] * valid_rec.unsqueeze(-1).to(q_all.dtype)
+        rec_mean = q_rec_beats.sum(dim=1) / valid_rec.sum(dim=1, keepdim=True).clamp_min(1).to(q_all.dtype)
+        flat_idx = rec_gidx[valid_rec].long()
+        rec_ids = torch.arange(rec_gidx.shape[0], device=device).unsqueeze(1).expand_as(rec_gidx)[valid_rec]
+        q_rec_flat = torch.empty_like(q_all)
+        q_rec_flat[flat_idx] = rec_mean[rec_ids]
+        q_all = (1.0 - float(alpha_rec)) * q_all + float(alpha_rec) * q_rec_flat
+    f_k = q_all.sum(dim=0, keepdim=True).clamp_min(1e-12)
+    p = (q_all * q_all) / (f_k ** float(rho))
     return p / p.sum(dim=1, keepdim=True).clamp_min(1e-12)
 
 
@@ -406,6 +434,8 @@ def _run_main_training_phase(
     lr_probe: float = 1e-3,
     history: list[dict] | None = None,
     use_amp: bool = True,
+    dec_alpha_rec: float = 0.0,
+    dec_rho: float = 1.0,
 ) -> tuple[int, str | None]:
     train_gen = generator.get_record_batch_generator(mode="train", max_beats=num_used_beats, shuffle=True)
     val_gen   = generator.get_record_batch_generator(mode="val",   max_beats=num_used_beats, shuffle=False)
@@ -427,8 +457,12 @@ def _run_main_training_phase(
                 num_used_beats, target="sex", label="sex",
             )
 
-        p_train = _compute_target_distribution(model, generator, "train", device, use_amp=use_amp)
-        p_val   = _compute_target_distribution(model, generator, "val",   device, use_amp=use_amp)
+        p_train = _compute_target_distribution(
+            model, generator, "train", device, use_amp=use_amp, alpha_rec=dec_alpha_rec, rho=dec_rho
+        )
+        p_val = _compute_target_distribution(
+            model, generator, "val", device, use_amp=use_amp, alpha_rec=dec_alpha_rec, rho=dec_rho
+        )
 
         model.train()
         for _ in range(num_batches):
@@ -589,6 +623,8 @@ def train_model(
     probe_refit_epochs: int = config.probe_refit_epochs,
     use_amp: bool = config.use_amp,
     fast_gpu: bool = config.fast_gpu,
+    dec_alpha_rec: float = getattr(config, "dec_alpha_rec", 0.0),
+    dec_rho: float = getattr(config, "dec_rho", 1.0),
 ) -> str | None:
     device = _get_device()
     model  = model.to(device)
@@ -613,8 +649,8 @@ def train_model(
 
     dev_str = torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
     amp_str = ("bf16" if (device.type == "cuda" and torch.cuda.is_bf16_supported()) else "fp16") if (use_amp and device.type == "cuda") else "fp32"
-    print(f"\n[Training] {ex_name}  latent={model.latent_dim}  SOM={som_dim[0]}x{som_dim[1]}  "
-          f"device={dev_str}  precision={amp_str}  fused={use_fused}  gpu_preload={generator.preload_to_gpu}")
+    print(f"\n[Training] {ex_name}  arch={getattr(model, 'arch_version', 'v1')}  latent={model.latent_dim}  SOM={som_dim[0]}x{som_dim[1]}  "
+          f"dec=(alpha={dec_alpha_rec:.2f}, rho={dec_rho:.2f})  device={dev_str}  precision={amp_str}  fused={use_fused}  gpu_preload={generator.preload_to_gpu}")
 
     extra_epochs = 8
     total_epochs = num_epochs + epochs_pretrain + extra_epochs
@@ -653,6 +689,8 @@ def train_model(
         lr_probe=lr_probe,
         history=history,
         use_amp=use_amp,
+        dec_alpha_rec=dec_alpha_rec,
+        dec_rho=dec_rho,
     )
 
     pbar.close()
@@ -878,6 +916,7 @@ def main(cfg=None, model_path=None):
             age_corr_ramp_epochs=cfg.age_corr_ramp_epochs,
             som_init_std=cfg.som_init_std,
             amp_context_dim=amp_context_dim,
+            arch_version=getattr(cfg, "arch_version", "v1"),
         )
         best_ckpt = train_model(
             model, gen,
@@ -901,6 +940,8 @@ def main(cfg=None, model_path=None):
             probe_refit_epochs=getattr(cfg, "probe_refit_epochs", 1),
             use_amp=use_amp,
             fast_gpu=fast_gpu,
+            dec_alpha_rec=float(getattr(cfg, "dec_alpha_rec", 0.0)),
+            dec_rho=float(getattr(cfg, "dec_rho", 1.0)),
         )
         if getattr(cfg, "use_best_checkpoint", True) and best_ckpt and os.path.exists(best_ckpt):
             state, _ = _load_checkpoint_state(best_ckpt, _get_device())
@@ -943,6 +984,10 @@ def _parse_cli_args():
     p.add_argument("--with-age-corr", action="store_true", help="Enable disease-conditioned age correction (0.30)")
     p.add_argument("--no-record-attn", action="store_true", help="Disable record-level attention loss (eta=0)")
     p.add_argument("--with-record-attn", action="store_true", help="Enable record-level attention loss (eta=1.0)")
+    p.add_argument("--arch", choices=("v1", "v2"), default=None, help="Architecture version (v1=depthwise Conv1D, v2=multi-scale residual + ordinal age)")
+    p.add_argument("--dec-alpha-rec", type=float, default=None, help="Record-level blend alpha in Phase 3 DEC target (default 0.20 for v2, 0.0 for v1)")
+    p.add_argument("--dec-rho", type=float, default=None, help="Cluster frequency damping rho in Phase 3 DEC target (default 0.85 for v2, 1.0 for v1)")
+    p.add_argument("--weight-decay", type=float, default=None, help="Adam weight decay (default 1e-4 for v2, 0.0 for v1)")
     p.add_argument("--deterministic", action="store_true", help="Strict FP32 deterministic mode (disables TF32/AMP/cuDNN benchmark)")
     p.add_argument("--eval-ckpt", type=str, default=None, help="Evaluate an existing checkpoint instead of training")
     return p.parse_args()
@@ -951,6 +996,14 @@ def _parse_cli_args():
 if __name__ == "__main__":
     args = _parse_cli_args()
     cfg = DPSOM_Config()
+    if args.arch is not None:
+        cfg.arch_version = args.arch
+    if args.dec_alpha_rec is not None:
+        cfg.dec_alpha_rec = args.dec_alpha_rec
+    if args.dec_rho is not None:
+        cfg.dec_rho = args.dec_rho
+    if args.weight_decay is not None:
+        cfg.weight_decay = args.weight_decay
     if args.som_dim:
         cfg.som_dim = (args.som_dim[0], args.som_dim[1])
     if args.latent_dim is not None:
