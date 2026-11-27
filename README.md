@@ -44,18 +44,20 @@ python explorer/server.py [--port 8050] [--host 0.0.0.0]
 docker compose -f explorer/docker-compose.yml up --build -d
 ```
 
-**Vercel static hosting** (zero Python serverless limits; all Vercel files live inside `explorer/` via [`explorer/vercel.json`](explorer/vercel.json)):
+**Vercel static hosting & GitHub auto-deploy** (all Vercel files live inside `explorer/` via [`explorer/vercel.json`](explorer/vercel.json)):
 
-```bash
-# Build full static snapshot (precomputed SOM grids, lazy cell files, Cell Compare stats,
-# UDA Playground demos, 168-run benchmarks, and all 12 figures) and deploy from explorer/
-python explorer/build_static_site.py
-cd explorer && npx vercel --prod
-```
-
-- When linking the GitHub repository to Vercel, set **Root Directory** to `explorer`: `explorer/vercel.json` runs `python3 build_static_site.py --if-missing`, falling back gracefully to pure Python stdlib when checkpoints/`data/` are absent (System Overview, figures, and UDA benchmarks active; SOM grid shows a preview notice).
-- **Vercel Web Analytics** is pre-wired in [`explorer/static/index.html`](explorer/static/index.html) via `/_vercel/insights/script.js` (`window.va`); enable the **Analytics** tab in your Vercel project dashboard to activate tracking.
-- To pair a Vercel-hosted static frontend with live PyTorch ECG upload and arbitrary UDA runs on a GPU/CPU host, start `explorer/server.py` with `EXPLORER_CORS_ORIGINS=https://your-app.vercel.app` and open `https://your-app.vercel.app/?api=https://your-fastapi-host`.
+- **GitHub → Vercel auto-deploy** (precomputed `explorer/dist/` is tracked in Git for full 4-view hosting out-of-the-box):
+  1. Connect your GitHub repository in Vercel and set **Root Directory** to `explorer`.
+  2. Keep default Build/Output settings (`explorer/vercel.json` runs `python3 build_static_site.py --if-missing`, preserving tracked `static-data/` snapshots while refreshing any `explorer/static/` UI edits).
+  3. Enable **Analytics** in your Vercel project dashboard to activate Vercel Web Analytics (`/_vercel/insights/script.js` in [`explorer/static/index.html`](explorer/static/index.html)).
+- **Regenerate snapshots or deploy via CLI**:
+  ```bash
+  # Rebuild full static snapshots (SOM grids, lazy cell waveforms, Cell Compare stats, UDA demos, 12 figures)
+  python explorer/build_static_site.py
+  # Optional manual CLI deploy without git push
+  cd explorer && npx vercel --prod
+  ```
+- **Remote GPU/CPU backend (optional)**: To enable live ECG file uploads and arbitrary UDA runs from the Vercel frontend, run `explorer/server.py` with `EXPLORER_CORS_ORIGINS=https://your-app.vercel.app` and open `https://your-app.vercel.app/?api=https://your-fastapi-host`.
 
 Open `http://localhost:8050` in a browser to browse SOM nodes, inspect 12-lead ECG prototypes and percentile bands, and predict Age / Sex / SOM placement on new ECG files directly from the sidebar.
 

@@ -30,7 +30,6 @@ logs/*
 !logs/.gitkeep
 explorer/cache/*
 !explorer/cache/.gitkeep
-explorer/dist/
 *.pkl
 *.npz
 *.ckpt

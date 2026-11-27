@@ -425,7 +425,8 @@ def main() -> None:
     out_dir = os.path.abspath(args.out_dir)
     sentinel = os.path.join(out_dir, "static-data", "models.json")
     if args.if_missing and os.path.isfile(sentinel):
-        print(f"[build_static_site] Found existing bundle at {sentinel}; skipping rebuild (--if-missing).")
+        _copy_static_shell(_REPO_ROOT, out_dir)
+        print(f"[build_static_site] Found existing snapshots at {sentinel}; refreshed HTML/CSS/JS shell (--if-missing).")
         return
 
     summary = build_static_site(
