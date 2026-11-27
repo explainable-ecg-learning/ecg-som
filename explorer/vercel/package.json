@@ -1,0 +1,24 @@
+{
+  "name": "ecg-som-explorer",
+  "version": "1.0.0",
+  "description": "ECG-SOM Explorer - Static web application for exploring ECG Self-Organizing Maps",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 8041",
+    "preview": "python3 -m http.server 8041",
+    "lint": "echo 'No linting configured for static HTML project'",
+    "test": "echo 'No tests configured for static HTML project'"
+  },
+  "keywords": [
+    "ecg",
+    "som",
+    "visualization",
+    "analytics"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
